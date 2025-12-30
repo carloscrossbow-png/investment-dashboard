@@ -74,7 +74,9 @@ def get_vix():
             return {
                 'current': vix_data['Close'].iloc[-1],
                 'history': vix_data['Close'].tolist()
-                                   ass
+            }
+    except:
+        pass
     return {'current': 0, 'history': []}
 
 @st.cache_data(ttl=3600)
@@ -94,7 +96,7 @@ def get_major_indices():
             if len(data) > 0:
                 current = data['Close'].iloc[-1]
                 prev = data['Close'].iloc[-2] if len(data) > 1 else current
-                change_pct = ((current - prev) / pr      00) if prev > 0 else 0
+                change_pct = ((current - prev) / prev * 100) if prev > 0 else 0
 
                 results[name] = {
                     'price': current,
@@ -115,9 +117,10 @@ def get_stock_price(ticker):
         if len(data) > 0:
             current = data['Close'].iloc[-1]
             prev = data['Close'].iloc[-2] if len(data) > 1 else current
-            chang            chang         / prev * 100) if prev > 0 else 0
+            change_pct = ((current - prev) / prev * 100) if prev > 0 else 0
 
-                                     'price': current,
+            return {
+                'price': current,
                 'change_pct': change_pct
             }
     except:
@@ -130,7 +133,12 @@ def calculate_danger_level(buffett, yield_spread, vix):
 
     # イールドカーブ
     if yield_spread < -0.5:
-                                                                                   f vix > 30:
+        danger += 3
+    elif yield_spread < 0:
+        danger += 2
+
+    # VIX
+    if vix > 30:
         danger += 3
     elif vix > 25:
         danger += 2
@@ -147,7 +155,8 @@ def calculate_danger_level(buffett, yield_spread, vix):
 
     return danger
 
-def load_cyclical_pdef load_cyclical_pdef load_cy�ル株ポートフォリオ読込（Google Sheets対応）"""
+def load_cyclical_portfolio():
+    """シクリカル株ポートフォリオ読込（Google Sheets対応）"""
 
     # Google Sheets の CSV エクスポート URL（設定で変更可能）
     # サイドバーで設定した場合はそちらを優先
@@ -186,10 +195,16 @@ def load_cyclical_pdef load_cyclical_pdef load_cy�ル株ポートフォリオ読
 
             # 平均取得単価計算（加重平均）
             total_cost = (stock_records['購入株数'] * stock_records['購入単価']).sum()
-            avg_price = total_cost /             avg_price = total_cost /             avg_price = total�購入日を使用
-            firs            firs            firs            firs             集約レ            firs            firs  ated_rows.append({
+            avg_price = total_cost / total_shares if total_shares > 0 else 0
+
+            # 最も古い購入日を使用
+            first_purchase = stock_records['購入日'].min()
+
+            # 集約レコード作成
+            aggregated_rows.append({
                 '銘柄コード': code,
-                '                '                '                '             '�                '     ,
+                '銘柄名': stock_records.iloc[0]['企業名'],
+                '購入価格': avg_price,
                 '購入株数': total_shares,
                 '購入日': first_purchase
             })
@@ -202,10 +217,11 @@ def load_cyclical_pdef load_cyclical_pdef load_cy�ル株ポートフォリオ読
         '銘柄名': [],
         '購入価格': [],
         '購入株数': [],
-        '�       �': []
+        '購入日': []
     })
 
-# メイン# メイン# メイン# メイン# メイン# メイン# �")
+# メインページ
+st.title("📊 統合投資ダッシュボード")
 st.caption(f"最終更新: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}")
 
 # サイドバー
@@ -215,17 +231,10 @@ with st.sidebar:
     # Google Sheets 連携設定
     st.subheader("☁️ データソース")
 
-    # Secretsからデフォルトキ URLを取得（設定されていない場合は空文字列）
-    default_google_sheets_url = ""
-    try:
-        default_google_sheets_url = st.secrets.get("google_sheets", {}).get("csv_url", "")
-    except:
-        pass
-
     # Google Sheets URL入力
     google_sheets_url_input = st.text_input(
         "Google Sheets CSV URL（任意）",
-        value=default_google_sheets_url,
+        value="",
         help="Google Sheets の CSV エクスポート URL を入力すると、外出先からも最新データを確認できます",
         placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0"
     )
@@ -238,9 +247,13 @@ with st.sidebar:
     if google_sheets_url_input:
         st.info("📊 データソース: Google Sheets")
     else:
-                                      ��: ローカルファイル")
+        st.info("💻 データソース: ローカルファイル")
 
-    st.markdown("-    st.markdown("-    st.markdown("-    st.markdown("-    st.markdown("-    st.markdown("-    s�ト指数 (%) ※手動入力",
+    st.markdown("---")
+
+    # バフェット指数
+    buffett_indicator = st.number_input(
+        "バフェット指数 (%) ※手動入力",
         min_value=50.0,
         max_value=300.0,
         value=200.0,
@@ -248,7 +261,8 @@ with st.sidebar:
         help="https://currentmarketvaluation.com/ で確認"
     )
 
-    # FAN    # FAN    # FAN    # FAN    # FAN    # �")
+    # FANG+設定
+    st.subheader("💎 FANG+設定")
     fang_investment = st.number_input(
         "投資額（円）",
         min_value=0,
@@ -268,10 +282,14 @@ with st.sidebar:
     # 現金
     st.subheader("💵 現金")
     cash_reserve = st.number_input(
-        "待機資�        "待機資�      _value=0,
+        "待機資金（円）",
+        min_value=0,
         max_value=10000000,
-        max_value=10000000,
-待機資�      _value=0st.markdown("---")
+        value=100000,
+        step=10000
+    )
+
+    st.markdown("---")
     st.caption("毎週日曜日にバフェット指数を更新")
 
 # データ取得
@@ -304,7 +322,8 @@ with col2:
     vix_current = vix_data['current']
     st.metric("VIX指数", f"{vix_current:.2f}")
 
-    if vix_current     if vix_current     if vix_current  �")
+    if vix_current < 15:
+        st.success("😊 楽観的")
         st.info("市場は安定。保有継続。")
     elif vix_current < 20:
         st.info("😐 中立")
@@ -332,7 +351,7 @@ with col2:
             showlegend=False,
             template="plotly_dark"
         )
-        st.        st.        st.        st.idth=True)
+        st.plotly_chart(fig, width="stretch")
 
 with col3:
     st.markdown("### 💰 バフェット指数")
@@ -342,7 +361,8 @@ with col3:
         st.error("🚨 歴史的割高")
         st.error("警戒！調整リスク大。")
     elif buffett_indicator > 180:
-        st.warning("⚠️ 割高")        st.warning("⚠️ 割高")  ��重に。")
+        st.warning("⚠️ 割高")
+        st.warning("新規購入は慎重に。")
     elif buffett_indicator > 150:
         st.info("😐 やや割高")
     else:
@@ -357,7 +377,8 @@ st.markdown('<div class="section-header">💼 ポートフォリオ全体</div>'
 cyclical_df = load_cyclical_portfolio()
 
 # FANG+評価額計算
-fang_currefang_currefang_currefang_currefanrofit = 0
+fang_current_value = fang_investment
+fang_profit = 0
 fang_profit_pct = 0
 
 if fang_purchase_price > 0:
@@ -376,7 +397,8 @@ if not cyclical_df.empty:
     for idx, row in cyclical_df.iterrows():
         ticker = str(row['銘柄コード']) + '.T'
         purchase_price = float(row['購入価格'])
-                                                    cost = purchase_price * shares
+        shares = float(row['購入株数'])
+        cost = purchase_price * shares
 
         cyclical_total_cost += cost
 
@@ -437,7 +459,7 @@ fig.update_layout(
     height=300,
     template="plotly_dark"
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 # ========================================
 # 3. シクリカル株詳細
@@ -465,7 +487,8 @@ if not cyclical_df.empty:
         profit_pct = (profit / cost * 100) if cost > 0 else 0
 
         detail_rows.append({
-            '銘柄コ            '銘柄コ            '銘柄�  '銘柄名': stock_name,
+            '銘柄コード': row['銘柄コード'],
+            '銘柄名': stock_name,
             '購入価格': f"¥{purchase_price:,.0f}",
             '現在価格': f"¥{current_price:,.0f}",
             '株数': int(shares),
@@ -478,14 +501,18 @@ if not cyclical_df.empty:
 
     detail_df = pd.DataFrame(detail_rows)
 
-    # カラーコーディング（�    # カラーコーディング（�profit(s):
-        """損益率列に色を付�        """損益率列に色を�益率':
-            return ['backgr            return ['backgr                              return ['backgr            return ['backgr                              retu for v in s]
+    # カラーコーディング（損益率列のみ）
+    def highlight_profit(s):
+        """損益率列に色を付ける"""
+        if s.name == '損益率':
+            return ['background-color: #1a4d2e' if '+' in str(v)
+                   else 'background-color: #4d1a1a' if '-' in str(v)
+                   else '' for v in s]
         return ['' for _ in s]
 
     st.dataframe(
         detail_df.style.apply(highlight_profit),
-        use_container_width=True,
+        width="stretch",
         height=400
     )
 
@@ -500,7 +527,8 @@ if not cyclical_df.empty:
         shares = float(row['購入株数'])
         cost = purchase_price * shares
 
-        stock_data =         stock_data =         stock_data = ice = stock_data['price'] if stock_data['price'] > 0 else purchase_price
+        stock_data = get_stock_price(ticker)
+        current_price = stock_data['price'] if stock_data['price'] > 0 else purchase_price
         current_value = current_price * shares
         profit_pct = ((current_value - cost) / cost * 100) if cost > 0 else 0
 
@@ -534,7 +562,8 @@ if not cyclical_df.empty:
         signal_df = signal_df.sort_values('シグナル強度', ascending=False)
 
         st.dataframe(
-            signal            sig  use_container_width=True,
+            signal_df,
+            width="stretch",
             hide_index=True
         )
     else:
@@ -572,12 +601,19 @@ with col1:
     st.metric("⚠️ 警戒レベル", f"{danger_level} / 9")
 
     if danger_level >= 7:
-        s        s        s        s        s   anger_level >= 5:
+        st.error("🚨 最大警戒")
+    elif danger_level >= 5:
         st.warning("⚠️ 高警戒")
     elif danger_level >= 3:
         st.info("😐 中警戒")
     else:
-        st.success("✅ 低�        swit        st.success("✅ 低�   推�        st.success("✅ 低�        swit        st    st.error("🚨 即座に損切りを検討")
+        st.success("✅ 低警戒")
+
+with col2:
+    st.subheader("💡 推奨アクション")
+
+    if danger_level >= 7:
+        st.error("🚨 即座に損切りを検討")
         st.write("- 全ポジションの見直し")
         st.write("- 現金比率を60%以上に")
     elif danger_level >= 5:
@@ -595,6 +631,8 @@ with col1:
 
     if vix_data['current'] > 30:
         st.success("🎯 VIX 30超え！買い増しチャンス")
-        st.write(f"- 待機資金 ¥{cash_reser        st.write(f"- 待機資金 ¥ッター
+        st.write(f"- 待機資金 ¥{cash_reserve:,.0f} の活用を検討")
+
+# フッター
 st.markdown("---")
 st.caption("📌 このダッシュボードは投資判断の参考情報です。最終判断はご自身で行ってください。")
