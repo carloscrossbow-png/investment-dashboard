@@ -261,25 +261,22 @@ with st.sidebar:
         help="https://currentmarketvaluation.com/ で確認"
     )
 
+    # Secretsからデフォルト値を取得
+    default_buffett = 200.0
+    try:
+        default_buffett = float(st.secrets.get("settings", {}).get("buffett_indicator", 200.0))
+    except:
+        pass
+
     # バフェット指数
     buffett_indicator = st.number_input(
         "バフェット指数 (%) ※手動入力",
         min_value=50.0,
         max_value=300.0,
-        value=200.0,
+        value=default_buffett,
         step=1.0,
         help="https://currentmarketvaluation.com/ で確認"
     )
-
-    # バフェット指数確認ボタン
-    st.link_button(
-        "📊 バフェット指数を確認",
-        "https://currentmarketvaluation.com/",
-        use_container_width=True,
-        type="primary"
-    )
-
-    st.caption("💡 毎週日曜日に更新してください")
 
     st.markdown("---")
 
