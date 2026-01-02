@@ -251,16 +251,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # バフェット指数
-    buffett_indicator = st.number_input(
-        "バフェット指数 (%) ※手動入力",
-        min_value=50.0,
-        max_value=300.0,
-        value=200.0,
-        step=1.0,
-        help="https://currentmarketvaluation.com/ で確認"
-    )
-
     # Secretsからデフォルト値を取得
     default_buffett = 200.0
     try:
