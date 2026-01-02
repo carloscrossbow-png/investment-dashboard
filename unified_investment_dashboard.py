@@ -261,6 +261,18 @@ with st.sidebar:
         help="https://currentmarketvaluation.com/ で確認"
     )
 
+    # バフェット指数確認ボタン
+    st.link_button(
+        "📊 バフェット指数を確認",
+        "https://currentmarketvaluation.com/",
+        use_container_width=True,
+        type="primary"
+    )
+
+    st.caption("💡 毎週日曜日に更新してください")
+
+    st.markdown("---")
+
     # FANG+設定
     st.subheader("💎 FANG+設定")
     fang_investment = st.number_input(
