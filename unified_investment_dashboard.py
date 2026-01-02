@@ -261,6 +261,16 @@ with st.sidebar:
         help="https://currentmarketvaluation.com/ で確認"
     )
 
+    # バフェット指数
+    buffett_indicator = st.number_input(
+        "バフェット指数 (%) ※手動入力",
+        min_value=50.0,
+        max_value=300.0,
+        value=200.0,
+        step=1.0,
+        help="https://currentmarketvaluation.com/ で確認"
+    )
+
     # バフェット指数確認ボタン
     st.link_button(
         "📊 バフェット指数を確認",
