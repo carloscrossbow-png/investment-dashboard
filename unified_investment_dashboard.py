@@ -253,8 +253,10 @@ with st.sidebar:
 
     # Secretsからデフォルト値を取得
     default_buffett = 200.0
+    default_shiller = 30.0
     try:
         default_buffett = float(st.secrets.get("settings", {}).get("buffett_indicator", 200.0))
+        default_shiller = float(st.secrets.get("settings", {}).get("shiller_pe", 30.0))
     except:
         pass
 
@@ -266,6 +268,16 @@ with st.sidebar:
         value=default_buffett,
         step=1.0,
         help="https://currentmarketvaluation.com/ で確認"
+    )
+
+    # シラーPER
+    shiller_pe = st.number_input(
+        "シラーPER (倍) ※手動入力",
+        min_value=5.0,
+        max_value=60.0,
+        value=default_shiller,
+        step=0.1,
+        help="https://currentmarketvaluation.com/ で確認（Shiller PE Ratio）"
     )
 
     st.markdown("---")
@@ -376,6 +388,45 @@ with col3:
         st.info("😐 やや割高")
     else:
         st.success("✅ 適正水準")
+
+# 4列目を追加（シラーPER）
+st.markdown('<div class="section-header">🌍 マクロ経済指標</div>', unsafe_allow_html=True)
+
+col1, col2, col3, col4 = st.columns(4)
+
+# col1とcol2は既存のまま（債券利回り、VIX）
+
+with col3:
+    st.markdown("### 💰 バフェット指数")
+    st.metric("バフェット指数 (%)", f"{buffett_indicator:.1f}%")
+
+    if buffett_indicator > 200:
+        st.error("🚨 歴史的割高")
+        st.error("警戒！調整リスク大。")
+    elif buffett_indicator > 180:
+        st.warning("⚠️ 割高")
+        st.warning("新規購入は慎重に。")
+    elif buffett_indicator > 150:
+        st.info("😐 やや割高")
+    else:
+        st.success("✅ 適正水準")
+
+with col4:
+    st.markdown("### 📊 シラーPER")
+    st.metric("シラーPER (倍)", f"{shiller_pe:.1f}倍")
+
+    if shiller_pe > 30:
+        st.error("🚨 歴史的割高")
+        st.error("期待リターン低め。")
+    elif shiller_pe > 25:
+        st.warning("⚠️ 割高")
+        st.warning("慎重に投資。")
+    elif shiller_pe > 20:
+        st.info("😐 やや割高")
+    elif shiller_pe > 15:
+        st.success("✅ 適正水準")
+    else:
+        st.success("🎯 割安！")
 
 # ========================================
 # 2. ポートフォリオ全体サマリー
