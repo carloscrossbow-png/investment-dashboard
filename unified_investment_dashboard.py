@@ -9,6 +9,12 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import os
+import requests
+from bs4 import BeautifulSoup
+import re
+import requests
+from bs4 import BeautifulSoup
+import re
 
 
 # ========================================
@@ -651,6 +657,40 @@ def get_major_indices():
         pass
     return {}
 
+@st.cache_data(ttl=86400)  # 24時間キャッシュ
+def get_shiller_pe_auto():
+    """
+    multpl.comからシラーPERを自動取得
+
+    Returns:
+        float: シラーPER（取得失敗時はNone）
+    """
+    try:
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/120.0.0.0 Safari/537.36'
+            )
+        }
+
+        url = "https://www.multpl.com/shiller-pe"
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        current_value = soup.find('div', id='current')
+
+        if current_value:
+            shiller_text = current_value.get_text().strip()
+            # 正規表現で数値を抽出
+            match = re.search(r'\d+\.\d+', shiller_text)
+            if match:
+                return float(match.group())
+        return None
+    except:
+        return None
+
 @st.cache_data(ttl=3600)
 def get_stock_price(ticker):
     """日本株の現在価格取得"""
@@ -820,15 +860,26 @@ with st.sidebar:
         help="https://currentmarketvaluation.com/ で確認"
     )
 
-    # シラーPER
-    shiller_pe = st.number_input(
-        "シラーPER (倍) ※手動入力",
-        min_value=5.0,
-        max_value=60.0,
-        value=default_shiller,
-        step=0.1,
-        help="https://currentmarketvaluation.com/ で確認（Shiller PE Ratio）"
-    )
+    # シラーPER（自動取得）
+    st.markdown("### 📊 シラーPER")
+
+    shiller_auto = get_shiller_pe_auto()
+
+    if shiller_auto:
+        st.success(f"✅ 自動取得成功: {shiller_auto:.2f}倍")
+        shiller_pe = shiller_auto
+        st.info(f"📊 現在値: {shiller_pe:.2f}倍")
+    else:
+        st.warning("⚠️ 自動取得失敗。手動入力してください")
+
+        shiller_pe = st.number_input(
+            "シラーPER (倍) ※手動入力",
+            min_value=5.0,
+            max_value=60.0,
+            value=default_shiller,
+            step=0.1,
+            help="自動取得失敗時の手動入力"
+        )
 
     st.markdown("---")
 
@@ -861,7 +912,8 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.caption("毎週日曜日にバフェット指数とシラーPERを更新")
+    st.caption("毎週日曜日にバフェット指数を更新")
+    st.caption("シラーPERは自動更新（24時間キャッシュ）")
 
 # データ取得
 bonds = get_bond_yields()
