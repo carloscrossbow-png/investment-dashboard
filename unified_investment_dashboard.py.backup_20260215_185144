@@ -9,17 +9,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import os
-import sys
-
-# FANG+ 管理モジュール（株スクリーニング完成版フォルダから読み込む）
-_fang_module_path = os.path.expanduser("~/PyCharmMiscProject/株スクリーニング完成版")
-if _fang_module_path not in sys.path:
-    sys.path.insert(0, _fang_module_path)
-try:
-    from fang_manager import calc_fang_summary, add_fang_purchase, get_fang_current_price
-    FANG_MODULE_OK = True
-except ImportError:
-    FANG_MODULE_OK = False
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -895,64 +884,22 @@ with st.sidebar:
     st.markdown("---")
 
     # FANG+設定
-    st.subheader("💎 FANG+インデックス")
+    st.subheader("💎 FANG+設定")
+    fang_investment = st.number_input(
+        "投資額（円）",
+        min_value=0,
+        max_value=10000000,
+        value=400000,
+        step=10000
+    )
 
-    if FANG_MODULE_OK:
-        # 基準価額の自動取得ボタン
-        if st.button("📡 基準価額を自動取得", help="Yahoo!ファイナンスから取得します"):
-            with st.spinner("取得中..."):
-                _auto_price = get_fang_current_price()
-            if _auto_price > 0:
-                st.session_state["fang_price_auto"] = _auto_price
-                st.success(f"取得成功: ¥{_auto_price:,.0f}")
-            else:
-                st.warning("自動取得失敗。手動で入力してください。")
-
-        # 手動入力（自動取得失敗時のバックアップ）
-        fang_manual_price = st.number_input(
-            "現在の基準価額（手動・任意）",
-            min_value=0.0,
-            value=0.0,
-            step=100.0,
-            help="自動取得が失敗した場合に入力してください"
-        )
-
-        # 使用する価格を決定（セッション自動取得 > 手動入力）
-        _auto = st.session_state.get("fang_price_auto", 0.0)
-        fang_display_price = _auto if _auto > 0 else fang_manual_price
-
-        # 購入履歴追加フォーム
-        with st.expander("➕ 積立購入を追加"):
-            _col1, _col2 = st.columns(2)
-            with _col1:
-                _new_date = st.date_input("購入日", value=None, key="fang_date")
-                _new_amount = st.number_input("投資額（円）", min_value=0, step=10000, key="fang_amount")
-            with _col2:
-                _new_price = st.number_input("取得単価（円）", min_value=0.0, step=100.0, key="fang_price_input")
-                _new_memo = st.text_input("メモ（任意）", placeholder="例: NISA成長投資枠", key="fang_memo")
-            if st.button("追加して保存", key="fang_add"):
-                if _new_date and _new_amount > 0 and _new_price > 0:
-                    try:
-                        add_fang_purchase(str(_new_date), _new_amount, _new_price, _new_memo)
-                        st.success("✅ 購入履歴を追加しました！")
-                        st.rerun()
-                    except Exception as _e:
-                        st.error(f"エラー: {_e}")
-                else:
-                    st.warning("購入日・投資額・取得単価を入力してください。")
-
-        # サマリー計算（後続の計算ロジックで使用）
-        fang_summary = calc_fang_summary(current_price=fang_display_price)
-        fang_investment = fang_summary["total_investment"]
-        fang_purchase_price = fang_summary["avg_cost"]  # 加重平均
-
-    else:
-        # fang_manager.py が見つからない場合は旧来の手動入力
-        st.warning("⚠️ fang_manager.py が見つかりません。手動入力モードです。")
-        fang_investment = st.number_input("投資額（円）", min_value=0, max_value=10000000, value=100000, step=10000)
-        fang_purchase_price = st.number_input("購入時の基準価額", min_value=0.0, value=84919.0, step=100.0)
-        fang_display_price = 0.0
-        fang_summary = None
+    fang_purchase_price = st.number_input(
+        "購入時の基準価額",
+        min_value=0.0,
+        value=0.0,
+        step=100.0,
+        help="購入後に入力してください"
+    )
 
     # 現金
     st.subheader("💵 現金")
@@ -1134,24 +1081,17 @@ st.markdown('<div class="section-header">💼 ポートフォリオ全体</div>'
 cyclical_df = load_cyclical_portfolio()
 
 # FANG+評価額計算
-if FANG_MODULE_OK and fang_summary is not None:
-    # fang_manager.py による正確な円建て計算
-    fang_current_value = fang_summary["current_value"]
-    fang_profit        = fang_summary["profit"]
-    fang_profit_pct    = fang_summary["profit_pct"]
-    fang_avg_cost      = fang_summary["avg_cost"]
-    fang_price_source  = fang_summary["price_source"]
-else:
-    # フォールバック: 旧来の QQQ 連動計算
-    fang_current_value = fang_investment
-    fang_profit = 0
-    fang_profit_pct = 0
-    if fang_purchase_price > 0:
-        qqq_data = get_stock_price('QQQ')
-        if qqq_data['price'] > 0:
-            fang_current_value = fang_investment * (qqq_data['price'] / fang_purchase_price)
-            fang_profit = fang_current_value - fang_investment
-            fang_profit_pct = (fang_profit / fang_investment * 100)
+fang_current_value = fang_investment
+fang_profit = 0
+fang_profit_pct = 0
+
+if fang_purchase_price > 0:
+    # 実際にはQQQの価格を取得して計算
+    qqq_data = get_stock_price('QQQ')
+    if qqq_data['price'] > 0 and fang_purchase_price > 0:
+        fang_current_value = fang_investment * (qqq_data['price'] / fang_purchase_price)
+        fang_profit = fang_current_value - fang_investment
+        fang_profit_pct = (fang_profit / fang_investment * 100)
 
 # シクリカル株評価額計算
 cyclical_total_cost = 0
