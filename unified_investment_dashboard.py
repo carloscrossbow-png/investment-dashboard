@@ -27,20 +27,6 @@ try:
     SIGNAL_EVALUATOR_OK = True
 except ImportError:
     SIGNAL_EVALUATOR_OK = False
-
-# Code 7: シクリカル株購入記録モジュール
-try:
-    from cyclical_purchase_manager import add_cyclical_purchase, get_purchase_history
-    CYCLICAL_PURCHASE_MODULE_OK = True
-except ImportError:
-    CYCLICAL_PURCHASE_MODULE_OK = False
-
-# Code 6: 購入タイミング分析モジュール
-try:
-    from timing_analyzer import analyze_purchase_timing
-    TIMING_ANALYZER_OK = True
-except ImportError:
-    TIMING_ANALYZER_OK = False
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -986,59 +972,6 @@ with st.sidebar:
     )
 
     st.markdown("---")
-
-    # シクリカル株購入記録
-    st.subheader("📊 シクリカル株")
-
-    if CYCLICAL_PURCHASE_MODULE_OK:
-        # 購入記録追加フォーム
-        with st.expander("➕ 購入記録を追加"):
-            _col1, _col2 = st.columns(2)
-            with _col1:
-                _cyc_date = st.date_input("購入日", value=None, key="cyc_date")
-                _cyc_code = st.text_input("銘柄コード（4桁）", placeholder="例: 9127", key="cyc_code")
-                _cyc_name = st.text_input("企業名", placeholder="例: 正栄汽船", key="cyc_name")
-            with _col2:
-                _cyc_price = st.number_input("購入単価（円）", min_value=0.0, step=100.0, key="cyc_price")
-                _cyc_shares = st.number_input("購入株数", min_value=0, step=1, key="cyc_shares")
-                _cyc_memo = st.text_input("メモ（任意）", placeholder="例: 11月分積立", key="cyc_memo")
-            
-            # 投資額を自動表示
-            if _cyc_price > 0 and _cyc_shares > 0:
-                _cyc_investment = _cyc_price * _cyc_shares
-                st.info(f"💰 投資額: ¥{_cyc_investment:,.0f}")
-            
-            if st.button("追加して保存", key="cyc_add"):
-                if _cyc_date and _cyc_code and _cyc_name and _cyc_price > 0 and _cyc_shares > 0:
-                    try:
-                        add_cyclical_purchase(
-                            purchase_date=str(_cyc_date),
-                            ticker_code=_cyc_code,
-                            company_name=_cyc_name,
-                            purchase_price=_cyc_price,
-                            shares=_cyc_shares,
-                            memo=_cyc_memo
-                        )
-                        st.success("✅ 購入記録を追加しました！")
-                        st.rerun()
-                    except Exception as _e:
-                        st.error(f"エラー: {_e}")
-                else:
-                    st.warning("すべての必須項目を入力してください。")
-        
-        # 購入履歴表示
-        with st.expander("📜 購入履歴を確認"):
-            _history = get_purchase_history()
-            if not _history.empty:
-                st.dataframe(_history, use_container_width=True, hide_index=True)
-                st.caption(f"合計: {len(_history)}件の購入記録")
-            else:
-                st.info("購入履歴がありません。")
-    
-    else:
-        st.warning("⚠️ cyclical_purchase_manager.py が見つかりません。")
-
-    st.markdown("---")
     st.caption("毎週日曜日にバフェット指数を更新")
     st.caption("シラーPERは自動更新（24時間キャッシュ）")
 
@@ -1398,34 +1331,6 @@ if detailed_stocks:
                                 st.write(f"ROE: {signal_result['current_roe']:.1f}%")
                             if signal_result['current_equity']:
                                 st.write(f"自己資本比率: {signal_result['current_equity']:.1f}%")
-                    
-                    # Code 6統合: 購入タイミング分析
-                    if TIMING_ANALYZER_OK:
-                        with st.expander("📈 購入タイミング分析"):
-                            timing_result = analyze_purchase_timing(
-                                ticker_code=code,
-                                current_per=signal_result.get('current_per')
-                            )
-                            
-                            # タイミングスコア表示
-                            timing_col1, timing_col2 = st.columns(2)
-                            with timing_col1:
-                                st.metric("購入推奨度", f"{timing_result['timing_score']}/10点")
-                            with timing_col2:
-                                st.metric("判定", timing_result['recommendation'])
-                            
-                            # 推奨アクション
-                            st.markdown(f"**📋 推奨アクション**: {timing_result['action']}")
-                            
-                            # 詳細指標
-                            st.markdown("**📊 分析詳細**:")
-                            for indicator, value, signal, detail in timing_result.get('details', []):
-                                if signal:
-                                    st.markdown(f"**{indicator}**: {value} → {signal}")
-                                    st.caption(detail)
-                                else:
-                                    st.markdown(f"**{indicator}**: {value}")
-                                    st.caption(detail)
             
             except Exception as e:
                 st.error(f"⚠️ Code 5判定エラー: {e}")
