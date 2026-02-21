@@ -20,6 +20,13 @@ try:
     FANG_MODULE_OK = True
 except ImportError:
     FANG_MODULE_OK = False
+
+# Code 5: 売却シグナル判定モジュール
+try:
+    from signal_evaluator import evaluate_stock_signal
+    SIGNAL_EVALUATOR_OK = True
+except ImportError:
+    SIGNAL_EVALUATOR_OK = False
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -1247,46 +1254,143 @@ if detailed_stocks:
     # 各銘柄の詳細分析
     for stock_data in detailed_stocks:
 
-        # 詳細判定実行
-        judgment = get_detailed_cyclical_judgment(
-            ticker_code=stock_data['ticker_code'],
-            stock_name=stock_data['stock_name'],
-            current_data={
-                'per': stock_data['per'],
-                'dividend_yield': stock_data['dividend_yield'],
-                'equity_ratio': stock_data['equity_ratio'],
-                'roe': stock_data['roe'],
-                'price_position': stock_data['price_position']
-            },
-            macro_environment=macro_env
-        )
-
-        # 表示
-        with st.expander(
-                f"**{stock_data['ticker_code']} {stock_data['stock_name']}** - {judgment['level']} (スコア: {judgment['score']}点)",
-                expanded=True
-        ):
-            # 基本情報
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                st.metric(
-                    "現在価格",
-                    f"¥{stock_data['current_price']:,.0f}",
-                    f"{stock_data['profit_pct']:+.1f}%"
+        # Code 5統合: 高度な売却シグナル判定
+        if SIGNAL_EVALUATOR_OK:
+            try:
+                signal_result = evaluate_stock_signal(
+                    ticker_code=str(stock_data['ticker_code']),
+                    purchase_price=stock_data['purchase_price'],
+                    purchase_date=stock_data['purchase_date'],
+                    shares=stock_data['shares'],
+                    industry='',  # 業種情報がない場合は空文字
+                    purchase_per=None,
+                    purchase_roe=None,
+                    purchase_equity=None
                 )
-
-            with col2:
-                st.metric("PER", f"{stock_data['per']:.1f}倍")
-
-            with col3:
-                st.metric("配当", f"{stock_data['dividend_yield']:.1f}%")
-
-            with col4:
-                st.metric("自己資本比率", f"{stock_data['equity_ratio']:.1f}%")
-
-            # 詳細分析
-            st.markdown(judgment['analysis'])
+                
+                # シグナル強度に応じたアイコン
+                if signal_result['signal_strength'] >= 8:
+                    signal_icon = "🚨"
+                elif signal_result['signal_strength'] >= 6:
+                    signal_icon = "⚠️"
+                elif signal_result['signal_strength'] >= 4:
+                    signal_icon = "💡"
+                elif signal_result['signal_strength'] >= 2:
+                    signal_icon = "💡"
+                else:
+                    signal_icon = "✅"
+                
+                # 表示
+                with st.expander(
+                        f"{signal_icon} **{stock_data['ticker_code']} {stock_data['stock_name']}** - {signal_result['overall']} ({signal_result['signal_strength']}/10点)",
+                        expanded=True
+                ):
+                    # 基本情報
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric(
+                            "現在価格",
+                            f"¥{stock_data['current_price']:,.0f}",
+                            f"{stock_data['profit_pct']:+.1f}%"
+                        )
+                    
+                    with col2:
+                        current_per = signal_result['current_per']
+                        st.metric("PER", f"{current_per:.1f}倍" if current_per else "N/A")
+                    
+                    with col3:
+                        st.metric("配当", f"{stock_data['dividend_yield']:.1f}%")
+                    
+                    with col4:
+                        st.metric("シグナル強度", f"{signal_result['signal_strength']}/10")
+                    
+                    # 推奨アクション
+                    st.markdown(f"**📋 推奨アクション**: {signal_result['action']}")
+                    
+                    # 検出されたシグナル
+                    if len(signal_result['signals']) > 0:
+                        st.markdown("**🚨 検出されたシグナル**:")
+                        for sig in signal_result['signals']:
+                            level_icon = "🚨" if sig['level'] == '高' else "⚠️" if sig['level'] == '中' else "💡"
+                            st.markdown(f"{level_icon} **[{sig['category']}]** {sig['message']}")
+                            st.caption(f"→ {sig['detail']}")
+                    else:
+                        st.success("✅ 重大な問題は検出されませんでした")
+                    
+                    # 詳細データ
+                    with st.expander("📊 詳細データを表示"):
+                        detail_col1, detail_col2 = st.columns(2)
+                        with detail_col1:
+                            st.write("**株価情報**")
+                            st.write(f"52週高値: ¥{signal_result['stock_data'].get('52週高値', 0):,.0f}")
+                            st.write(f"52週安値: ¥{signal_result['stock_data'].get('52週安値', 0):,.0f}")
+                        with detail_col2:
+                            st.write("**財務情報**")
+                            if signal_result['current_roe']:
+                                st.write(f"ROE: {signal_result['current_roe']:.1f}%")
+                            if signal_result['current_equity']:
+                                st.write(f"自己資本比率: {signal_result['current_equity']:.1f}%")
+            
+            except Exception as e:
+                st.error(f"⚠️ Code 5判定エラー: {e}")
+                # フォールバック: 元の判定を表示
+                st.info("元の判定システムで表示します")
+                judgment = get_detailed_cyclical_judgment(
+                    ticker_code=stock_data['ticker_code'],
+                    stock_name=stock_data['stock_name'],
+                    current_data={
+                        'per': stock_data['per'],
+                        'dividend_yield': stock_data['dividend_yield'],
+                        'equity_ratio': stock_data['equity_ratio'],
+                        'roe': stock_data['roe'],
+                        'price_position': stock_data['price_position']
+                    },
+                    macro_environment=macro_env
+                )
+                with st.expander(
+                        f"**{stock_data['ticker_code']} {stock_data['stock_name']}** - {judgment['level']} (スコア: {judgment['score']}点)",
+                        expanded=True
+                ):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("現在価格", f"¥{stock_data['current_price']:,.0f}", f"{stock_data['profit_pct']:+.1f}%")
+                    with col2:
+                        st.metric("PER", f"{stock_data['per']:.1f}倍")
+                    with col3:
+                        st.metric("配当", f"{stock_data['dividend_yield']:.1f}%")
+                    with col4:
+                        st.metric("自己資本比率", f"{stock_data['equity_ratio']:.1f}%")
+                    st.markdown(judgment['analysis'])
+        
+        else:
+            # signal_evaluator.py がない場合は元の判定
+            judgment = get_detailed_cyclical_judgment(
+                ticker_code=stock_data['ticker_code'],
+                stock_name=stock_data['stock_name'],
+                current_data={
+                    'per': stock_data['per'],
+                    'dividend_yield': stock_data['dividend_yield'],
+                    'equity_ratio': stock_data['equity_ratio'],
+                    'roe': stock_data['roe'],
+                    'price_position': stock_data['price_position']
+                },
+                macro_environment=macro_env
+            )
+            with st.expander(
+                    f"**{stock_data['ticker_code']} {stock_data['stock_name']}** - {judgment['level']} (スコア: {judgment['score']}点)",
+                    expanded=True
+            ):
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("現在価格", f"¥{stock_data['current_price']:,.0f}", f"{stock_data['profit_pct']:+.1f}%")
+                with col2:
+                    st.metric("PER", f"{stock_data['per']:.1f}倍")
+                with col3:
+                    st.metric("配当", f"{stock_data['dividend_yield']:.1f}%")
+                with col4:
+                    st.metric("自己資本比率", f"{stock_data['equity_ratio']:.1f}%")
+                st.markdown(judgment['analysis'])
 
 else:
     st.info("シクリカル株の保有データがありません。")
