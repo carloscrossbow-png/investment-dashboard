@@ -34,6 +34,13 @@ try:
     CYCLICAL_PURCHASE_MODULE_OK = True
 except ImportError:
     CYCLICAL_PURCHASE_MODULE_OK = False
+
+# Code 6: 購入タイミング分析モジュール
+try:
+    from timing_analyzer import analyze_purchase_timing
+    TIMING_ANALYZER_OK = True
+except ImportError:
+    TIMING_ANALYZER_OK = False
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -1391,6 +1398,34 @@ if detailed_stocks:
                                 st.write(f"ROE: {signal_result['current_roe']:.1f}%")
                             if signal_result['current_equity']:
                                 st.write(f"自己資本比率: {signal_result['current_equity']:.1f}%")
+                    
+                    # Code 6統合: 購入タイミング分析
+                    if TIMING_ANALYZER_OK:
+                        with st.expander("📈 購入タイミング分析"):
+                            timing_result = analyze_purchase_timing(
+                                ticker_code=code,
+                                current_per=signal_result.get('current_per')
+                            )
+                            
+                            # タイミングスコア表示
+                            timing_col1, timing_col2 = st.columns(2)
+                            with timing_col1:
+                                st.metric("購入推奨度", f"{timing_result['timing_score']}/10点")
+                            with timing_col2:
+                                st.metric("判定", timing_result['recommendation'])
+                            
+                            # 推奨アクション
+                            st.markdown(f"**📋 推奨アクション**: {timing_result['action']}")
+                            
+                            # 詳細指標
+                            st.markdown("**📊 分析詳細**:")
+                            for indicator, value, signal, detail in timing_result.get('details', []):
+                                if signal:
+                                    st.markdown(f"**{indicator}**: {value} → {signal}")
+                                    st.caption(detail)
+                                else:
+                                    st.markdown(f"**{indicator}**: {value}")
+                                    st.caption(detail)
             
             except Exception as e:
                 st.error(f"⚠️ Code 5判定エラー: {e}")
