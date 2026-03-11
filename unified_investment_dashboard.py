@@ -9,580 +9,13 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import os
-import sys
 
-# FANG+ 管理モジュール（株スクリーニング完成版フォルダから読み込む）
-_fang_module_path = os.path.expanduser("~/PyCharmMiscProject/株スクリーニング完成版")
-if _fang_module_path not in sys.path:
-    sys.path.insert(0, _fang_module_path)
+# たーちゃん哲学2.0 - 売却目標価格自動推定
 try:
-    from fang_manager import calc_fang_summary, add_fang_purchase, get_fang_current_price
-    FANG_MODULE_OK = True
+    from auto_per_estimator import get_target_prices_auto, clear_cache, load_cache
+    TARGET_PRICES_AVAILABLE = True
 except ImportError:
-    FANG_MODULE_OK = False
-
-# Code 5: 売却シグナル判定モジュール
-try:
-    from signal_evaluator import evaluate_stock_signal
-    SIGNAL_EVALUATOR_OK = True
-except ImportError:
-    SIGNAL_EVALUATOR_OK = False
-
-# Code 7: シクリカル株購入記録モジュール
-try:
-    from cyclical_purchase_manager import add_cyclical_purchase, get_purchase_history
-    CYCLICAL_PURCHASE_MODULE_OK = True
-except ImportError:
-    CYCLICAL_PURCHASE_MODULE_OK = False
-import requests
-from bs4 import BeautifulSoup
-import re
-import requests
-from bs4 import BeautifulSoup
-import re
-
-
-# ========================================
-# 詳細判定関数
-# ========================================
-
-def calculate_market_score(buffett, shiller, vix, yield_curve):
-    """市場スコアを計算"""
-    score = 0
-    details = []
-
-    # バフェット指数の評価
-    if buffett < 100:
-        score += 3
-        buffett_eval = ("🎯 大チャンス", "+3点")
-    elif buffett < 130:
-        score += 2
-        buffett_eval = ("✅ 割安", "+2点")
-    elif buffett < 150:
-        score += 1
-        buffett_eval = ("😊 適正", "+1点")
-    elif buffett < 180:
-        score += 0
-        buffett_eval = ("😐 やや割高", "0点")
-    elif buffett < 200:
-        score -= 1
-        buffett_eval = ("⚠️ 割高", "-1点")
-    elif buffett < 220:
-        score -= 2
-        buffett_eval = ("🚨 かなり割高", "-2点")
-    else:
-        score -= 3
-        buffett_eval = ("🚨 歴史的割高", "-3点")
-
-    details.append(("💰 バフェット指数", f"{buffett:.1f}%", buffett_eval[0], buffett_eval[1]))
-
-    # シラーPERの評価
-    if shiller < 10:
-        score += 3
-        shiller_eval = ("🎯 大チャンス", "+3点")
-    elif shiller < 15:
-        score += 2
-        shiller_eval = ("✅ 割安", "+2点")
-    elif shiller < 20:
-        score += 1
-        shiller_eval = ("😊 適正", "+1点")
-    elif shiller < 25:
-        score += 0
-        shiller_eval = ("😐 やや割高", "0点")
-    elif shiller < 30:
-        score -= 1
-        shiller_eval = ("⚠️ 割高", "-1点")
-    elif shiller < 35:
-        score -= 2
-        shiller_eval = ("🚨 かなり割高", "-2点")
-    else:
-        score -= 3
-        shiller_eval = ("🚨 歴史的割高", "-3点")
-
-    details.append(("📊 シラーPER", f"{shiller:.1f}倍", shiller_eval[0], shiller_eval[1]))
-
-    # VIX指数の評価
-    if vix > 30:
-        score += 3
-        vix_eval = ("🎯 買いチャンス", "+3点")
-    elif vix > 25:
-        score += 1
-        vix_eval = ("😰 不安", "+1点")
-    elif vix > 20:
-        score += 0
-        vix_eval = ("😐 やや不安", "0点")
-    elif vix > 15:
-        score += 1
-        vix_eval = ("😊 中立", "+1点")
-    else:
-        score += 2
-        vix_eval = ("😌 楽観的", "+2点")
-
-    details.append(("😱 VIX指数", f"{vix:.2f}", vix_eval[0], vix_eval[1]))
-
-    # イールドカーブの評価
-    if yield_curve < -1.0:
-        score -= 2
-        yield_eval = ("🚨 深刻な逆イールド", "-2点")
-    elif yield_curve < -0.5:
-        score -= 1
-        yield_eval = ("⚠️ 逆イールド", "-1点")
-    elif yield_curve < 0:
-        score += 0
-        yield_eval = ("😐 フラット", "0点")
-    elif yield_curve < 1.0:
-        score += 1
-        yield_eval = ("✅ 正常", "+1点")
-    else:
-        score += 2
-        yield_eval = ("✅ 理想的", "+2点")
-
-    details.append(("🔴 イールドカーブ", f"{yield_curve:.2f}%", yield_eval[0], yield_eval[1]))
-
-    return score, details
-
-
-def get_detailed_us_market_judgment(buffett, shiller, vix, yield_curve, score):
-    """詳細な市場判断（米国株）"""
-
-    # 基本判定
-    if score >= 8:
-        level = '🎯 大チャンス'
-        color = 'success'
-    elif score >= 5:
-        level = '✅ 買い推奨'
-        color = 'success'
-    elif score >= 2:
-        level = '😊 やや買い'
-        color = 'info'
-    elif score >= -1:
-        level = '😐 中立'
-        color = 'info'
-    elif score >= -4:
-        level = '⚠️ やや警戒'
-        color = 'warning'
-    elif score >= -7:
-        level = '🚨 警戒'
-        color = 'error'
-    else:
-        level = '🚨 最大警戒'
-        color = 'error'
-
-    # 詳細分析
-    buffett_high = buffett > 200
-    shiller_high = shiller > 30
-    both_high = buffett_high and shiller_high
-    vix_panic = vix > 30
-    vix_calm = vix < 15
-    yield_inverted = yield_curve < 0
-
-    # パターン判定
-    if both_high and vix_calm:
-        pattern = '🚨 天井圏での楽観'
-        analysis = f'''
-**現在の状況**
-・バフェット指数：{buffett:.1f}%（歴史的割高）
-・シラーPER：{shiller:.1f}倍（歴史的割高）
-・VIX：{vix:.2f}（市場は楽観的）
-
-**何を意味するか**
-市場が歴史的割高にも関わらず、投資家は楽観的。これは典型的な「天井圏での楽観」パターン。
-
-**過去の類似ケース**
-・2000年ITバブル崩壊前
-・2007年リーマンショック前
-→ いずれも1-2年以内に大幅調整
-
-**リスク分析**
-🚨 調整リスク：非常に高い（-20～-40%）
-⏱️ 調整時期：6ヶ月～2年以内の可能性
-📊 期待リターン（今後10年）：3-5%/年程度
-'''
-        recommendation = f'''
-**FANG+投資について**
-
-❌ **新規投資：完全停止を推奨**
-　理由：高値づかみリスクが極めて高い
-
-⚠️ **既存10万円：保有継続**
-　理由：5年保有なら回復の可能性大
-　対策：-30%まで下落しても売らない覚悟を
-
-📊 **追加投資：以下の条件まで待機**
-　✅ 条件1：バフェット指数 200%以下
-　✅ 条件2：シラーPER 30倍以下
-　✅ 条件3：VIX 25超え（調整局面）
-
-**推奨戦略**
-1月：完全待機（現金温存）
-2-3月：市場動向を注視
-条件満たす：30%投資 → さらに下落：追加投資
-'''
-
-    elif both_high and vix_panic:
-        pattern = '🎯 割高圏での調整'
-        analysis = f'''
-**現在の状況**
-・バフェット指数：{buffett:.1f}%（割高）
-・シラーPER：{shiller:.1f}倍（割高）
-・VIX：{vix:.2f}（パニック状態）
-
-**何を意味するか**
-割高な市場で調整（パニック売り）が発生。短期的な押し目買いチャンスだが、長期的には割高。
-
-**期待シナリオ**
-📈 短期（3-6ヶ月）：+10～20%回復
-⚠️ 中期（1-2年）：再度調整の可能性
-📊 長期（5年）：プラスリターンの可能性高い
-'''
-        recommendation = f'''
-**FANG+投資について**
-
-⚠️ **新規投資：分割購入で参加**
-　VIXパニックは買いシグナル（ただし全額は避ける）
-
-📊 **推奨投資プラン**
-VIX 30-35：予算の30%投資
-VIX 35-40：さらに30%投資
-VIX 40超え：残り40%投資
-'''
-
-    elif yield_inverted and buffett_high:
-        pattern = '⚠️ 景気後退警告'
-        analysis = f'''
-**現在の状況**
-・バフェット指数：{buffett:.1f}%（割高）
-・イールドカーブ：{yield_curve:.2f}%（逆イールド）
-
-**何を意味するか**
-逆イールドは6-18ヶ月後の景気後退を示唆。
-
-**リスク分析**
-⚠️ 景気後退確率：6ヶ月以内 30%
-⚠️ 景気後退確率：12ヶ月以内 60%
-'''
-        recommendation = f'''
-**FANG+投資について**
-
-⚠️ **新規投資：慎重に**
-現金比率を高めに維持（50%以上）
-VIX 25超えまで待機も選択肢
-'''
-
-    else:
-        pattern = '📊 総合分析'
-        analysis = f'''
-**現在の状況**
-・バフェット指数：{buffett:.1f}%
-・シラーPER：{shiller:.1f}倍
-・VIX：{vix:.2f}
-・イールドカーブ：{yield_curve:.2f}%
-
-**市場の位置づけ**
-{'割安' if buffett < 150 else '適正' if buffett < 180 else '割高'}な水準で、
-{'パニック' if vix > 30 else '不安' if vix > 20 else '安定'}している状態。
-'''
-        recommendation = f'''
-スコア {score}点に基づき、慎重な投資判断を推奨。
-'''
-
-    return {
-        'level': level,
-        'color': color,
-        'score': score,
-        'pattern': pattern,
-        'analysis': analysis,
-        'recommendation': recommendation
-    }
-
-
-def get_detailed_cyclical_judgment(ticker_code, stock_name, current_data, macro_environment):
-    """シクリカル株の詳細判定"""
-
-    # 現在の指標
-    per = current_data.get('per', 10.0)
-    dividend_yield = current_data.get('dividend_yield', 0)
-    equity_ratio = current_data.get('equity_ratio', 40.0)
-    roe = current_data.get('roe', 10.0)
-    price_position = current_data.get('price_position', 0)
-
-    # マクロ環境
-    yield_curve = macro_environment.get('yield_curve', 0)
-
-    # スコアリング
-    score = 0
-    score_details = []
-
-    # PER分析（最重要）
-    if per < 5:
-        score += 5
-        per_eval = "🎯 超割安"
-        per_detail = f"PER {per:.1f}倍は絶好の買い場。通常時の半値以下。"
-    elif per < 7:
-        score += 4
-        per_eval = "✅ 割安"
-        per_detail = f"PER {per:.1f}倍は底値圏。積極的に買い。"
-    elif per < 10:
-        score += 2
-        per_eval = "😊 適正"
-        per_detail = f"PER {per:.1f}倍は適正水準。"
-    elif per < 12:
-        score += 0
-        per_eval = "😐 やや高め"
-        per_detail = f"PER {per:.1f}倍はやや高め。様子見推奨。"
-    elif per < 15:
-        score -= 2
-        per_eval = "⚠️ 高め"
-        per_detail = f"PER {per:.1f}倍は売却を検討すべき水準。"
-    else:
-        score -= 4
-        per_eval = "🚨 割高"
-        per_detail = f"PER {per:.1f}倍は天井圏。即座に売却推奨。"
-
-    score_details.append(("PER", f"{per:.1f}倍", per_eval, per_detail))
-
-    # 配当利回り
-    if dividend_yield > 4:
-        score += 2
-        div_eval = "✅ 高配当"
-        div_detail = f"配当{dividend_yield:.1f}%は高水準。"
-    elif dividend_yield > 2.5:
-        score += 1
-        div_eval = "😊 適正配当"
-        div_detail = f"配当{dividend_yield:.1f}%は標準的。"
-    else:
-        score += 0
-        div_eval = "😐 低配当"
-        div_detail = f"配当{dividend_yield:.1f}%はやや物足りない。"
-
-    score_details.append(("配当利回り", f"{dividend_yield:.1f}%", div_eval, div_detail))
-
-    # 自己資本比率
-    if equity_ratio > 50:
-        score += 2
-        equity_eval = "✅ 健全"
-        equity_detail = f"自己資本比率{equity_ratio:.1f}%は非常に健全。"
-    elif equity_ratio > 30:
-        score += 1
-        equity_eval = "😊 適正"
-        equity_detail = f"自己資本比率{equity_ratio:.1f}%は標準的。"
-    else:
-        score -= 1
-        equity_eval = "⚠️ やや不安"
-        equity_detail = f"自己資本比率{equity_ratio:.1f}%はやや低め。"
-
-    score_details.append(("自己資本比率", f"{equity_ratio:.1f}%", equity_eval, equity_detail))
-
-    # ROE
-    if roe > 15:
-        score += 1
-        roe_eval = "✅ 高収益"
-        roe_detail = f"ROE {roe:.1f}%は優良企業レベル。"
-    elif roe > 10:
-        score += 1
-        roe_eval = "😊 適正"
-        roe_detail = f"ROE {roe:.1f}%は標準的。"
-    else:
-        score += 0
-        roe_eval = "😐 低収益"
-        roe_detail = f"ROE {roe:.1f}%はやや低め。"
-
-    score_details.append(("ROE", f"{roe:.1f}%", roe_eval, roe_detail))
-
-    # マクロ環境
-    macro_note = ""
-    if yield_curve < 0:
-        score -= 1
-        macro_note = f"⚠️ 逆イールド（{yield_curve:.2f}%）→ 景気後退リスク"
-    else:
-        macro_note = f"✅ 正常なイールドカーブ（{yield_curve:.2f}%）"
-
-    # 総合判定
-    if score >= 10:
-        level = "🎯🎯🎯 絶好の買い場"
-        action = "即座に購入推奨"
-        color = "success"
-    elif score >= 7:
-        level = "🎯 強い買い推奨"
-        action = "積極的に購入"
-        color = "success"
-    elif score >= 4:
-        level = "✅ 買い推奨"
-        action = "購入を検討"
-        color = "success"
-    elif score >= 0:
-        level = "😐 中立"
-        action = "様子見"
-        color = "info"
-    elif score >= -3:
-        level = "⚠️ 売却検討"
-        action = "利益確定を検討"
-        color = "warning"
-    else:
-        level = "🚨 売却推奨"
-        action = "即座に売却"
-        color = "error"
-
-    # 詳細分析レポート
-    detailed_analysis = f'''
-### 📊 指標スコアリング
-**総合スコア：{score}点 / 15点**
-
-'''
-
-    for indicator, value, evaluation, detail in score_details:
-        detailed_analysis += f"**{indicator}**: {value} → {evaluation}  \n{detail}\n\n"
-
-    detailed_analysis += f"### 🌍 マクロ環境\n{macro_note}\n\n"
-    detailed_analysis += f"### 🎯 判断：{level}\n\n"
-
-    # PERベースの詳細判断
-    if per < 5 and dividend_yield > 3 and equity_ratio > 40:
-        detailed_analysis += f'''
-**【最強の買いシグナル】**
-
-✅ PER {per:.1f}倍 = 歴史的底値  
-✅ 配当 {dividend_yield:.1f}% = 高配当で待てる  
-✅ 自己資本比率 {equity_ratio:.1f}% = 財務健全
-
-**投資プラン**
-1. 今月：予算の60%を投資
-2. さらに下落時：残り40%投資
-3. 売却目標：PER 12倍で50%、PER 15倍で全売却
-
-**期待リターン：+{(12 / per - 1) * 100:.0f}%**
-'''
-
-    elif per < 7:
-        detailed_analysis += f'''
-**【買い推奨】**
-
-✅ PER {per:.1f}倍 = 底値圏  
-{'✅' if dividend_yield > 2.5 else '😐'} 配当 {dividend_yield:.1f}%
-
-**投資プラン**
-1. 今月：予算の40%を投資
-2. 追加下落時：30%追加
-3. 売却目標：PER 12-15倍
-
-**期待リターン：+{(12 / per - 1) * 100:.0f}%**
-'''
-
-    elif per >= 12:
-        detailed_analysis += f'''
-**【売却検討】**
-
-⚠️ PER {per:.1f}倍 = 天井圏
-
-**なぜ売却すべきか**
-・シクリカル株のPER {per:.1f}倍は割高
-・ここからの上昇余地は限定的
-
-**売却プラン**
-・PER 12-13倍：50%売却
-・PER 13-15倍：75%売却
-・PER 15倍超：全売却
-'''
-
-    return {
-        'score': score,
-        'level': level,
-        'action': action,
-        'color': color,
-        'details': score_details,
-        'analysis': detailed_analysis
-    }
-
-
-@st.cache_data(ttl=3600)
-def get_cyclical_detailed_data():
-    """シクリカル株の詳細データ取得"""
-
-    # 既存の関数を使う
-    cyclical_df = load_cyclical_portfolio()
-
-    if cyclical_df.empty:
-        return []
-
-    detailed_stocks = []
-
-    for idx, row in cyclical_df.iterrows():
-        ticker = str(row['銘柄コード']) + '.T'
-        stock_name = row['銘柄名']
-        purchase_price = float(row['購入価格'])
-        shares = float(row['購入株数'])
-        purchase_date = row['購入日']
-
-        try:
-            # Yahoo Financeから追加データ取得
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            history = stock.history(period="1y")
-
-            # 現在価格
-            if len(history) > 0:
-                current_price = history['Close'].iloc[-1]
-            else:
-                current_price = info.get('currentPrice', purchase_price)
-
-            # PER
-            per = info.get('trailingPE', None)
-            if per is None or per == 0 or str(per) == 'nan':
-                per = 10.0
-
-            # 配当利回り
-            dividend_yield = info.get('dividendYield', 0)
-            if dividend_yield and dividend_yield < 1:
-                dividend_yield = dividend_yield * 100
-            elif not dividend_yield:
-                dividend_yield = 0
-
-            # 自己資本比率（簡易）
-            equity_ratio = 40.0
-
-            # ROE
-            roe = info.get('returnOnEquity', 0)
-            if roe and roe < 1:
-                roe = roe * 100
-            elif not roe:
-                roe = 10.0
-
-            # 52週高値との比較
-            if len(history) > 0:
-                high_52w = history['High'].max()
-                price_position = ((current_price - high_52w) / high_52w * 100)
-            else:
-                price_position = 0
-
-            # 損益計算
-            cost = purchase_price * shares
-            current_value = current_price * shares
-            profit = current_value - cost
-            profit_pct = (profit / cost * 100) if cost > 0 else 0
-
-            detailed_stocks.append({
-                'ticker_code': row['銘柄コード'],
-                'stock_name': stock_name,
-                'purchase_price': purchase_price,
-                'current_price': current_price,
-                'shares': shares,
-                'purchase_date': purchase_date,
-                'cost': cost,
-                'current_value': current_value,
-                'profit': profit,
-                'profit_pct': profit_pct,
-                'per': per,
-                'dividend_yield': dividend_yield,
-                'equity_ratio': equity_ratio,
-                'roe': roe,
-                'price_position': price_position
-            })
-
-        except Exception as e:
-            print(f"Error fetching data for {ticker}: {e}")
-            continue
-
-    return detailed_stocks
+    TARGET_PRICES_AVAILABLE = False
 
 # ページ設定
 st.set_page_config(
@@ -682,40 +115,6 @@ def get_major_indices():
         pass
     return {}
 
-@st.cache_data(ttl=86400)  # 24時間キャッシュ
-def get_shiller_pe_auto():
-    """
-    multpl.comからシラーPERを自動取得
-
-    Returns:
-        float: シラーPER（取得失敗時はNone）
-    """
-    try:
-        headers = {
-            'User-Agent': (
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/120.0.0.0 Safari/537.36'
-            )
-        }
-
-        url = "https://www.multpl.com/shiller-pe"
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.content, 'html.parser')
-        current_value = soup.find('div', id='current')
-
-        if current_value:
-            shiller_text = current_value.get_text().strip()
-            # 正規表現で数値を抽出
-            match = re.search(r'\d+\.\d+', shiller_text)
-            if match:
-                return float(match.group())
-        return None
-    except:
-        return None
-
 @st.cache_data(ttl=3600)
 def get_stock_price(ticker):
     """日本株の現在価格取得"""
@@ -734,6 +133,29 @@ def get_stock_price(ticker):
     except:
         pass
     return {'price': 0, 'change_pct': 0}
+
+@st.cache_data(ttl=3600)
+def get_stock_fundamentals(ticker):
+    """PERとEPSを取得（たーちゃん哲学2.0用）"""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        per = info.get('trailingPE') or info.get('forwardPE') or 0
+        eps = info.get('trailingEps') or info.get('forwardEps') or 0
+        # 文字列が混入している場合の対応
+        try:
+            per = float(per) if per else 0
+            eps = float(eps) if eps else 0
+        except (ValueError, TypeError):
+            per, eps = 0, 0
+        # EPSが取れない場合は現在価格/PERで逆算
+        if (not eps or eps <= 0) and per > 0:
+            price_data = get_stock_price(ticker)
+            if price_data['price'] > 0:
+                eps = round(price_data['price'] / per, 2)
+        return {'per': per, 'eps': eps}
+    except Exception:
+        return {'per': 0, 'eps': 0}
 
 def calculate_danger_level(buffett, yield_spread, vix):
     """総合危険度計算"""
@@ -839,7 +261,7 @@ with st.sidebar:
     # Google Sheets 連携設定
     st.subheader("☁️ データソース")
 
-    # Secretsからデフォルト URLを取得
+    # Secretsからデフォルト URLを取得（設定されていない場合は空文字列）
     default_google_sheets_url = ""
     try:
         default_google_sheets_url = st.secrets.get("google_sheets", {}).get("csv_url", "")
@@ -866,107 +288,45 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Secretsからデフォルト値を取得
-    default_buffett = 200.0
-    default_shiller = 30.0
-    try:
-        default_buffett = float(st.secrets.get("settings", {}).get("buffett_indicator", 200.0))
-        default_shiller = float(st.secrets.get("settings", {}).get("shiller_pe", 30.0))
-    except:
-        pass
-
     # バフェット指数
     buffett_indicator = st.number_input(
         "バフェット指数 (%) ※手動入力",
         min_value=50.0,
         max_value=300.0,
-        value=default_buffett,
+        value=200.0,
         step=1.0,
         help="https://currentmarketvaluation.com/ で確認"
     )
 
-    # シラーPER（自動取得）
-    st.markdown("### 📊 シラーPER")
+    # バフェット指数確認ボタン
+    st.link_button(
+        "📊 バフェット指数を確認",
+        "https://currentmarketvaluation.com/",
+        use_container_width=True,
+        type="primary"
+    )
 
-    shiller_auto = get_shiller_pe_auto()
-
-    if shiller_auto:
-        st.success(f"✅ 自動取得成功: {shiller_auto:.2f}倍")
-        shiller_pe = shiller_auto
-        st.info(f"📊 現在値: {shiller_pe:.2f}倍")
-    else:
-        st.warning("⚠️ 自動取得失敗。手動入力してください")
-
-        shiller_pe = st.number_input(
-            "シラーPER (倍) ※手動入力",
-            min_value=5.0,
-            max_value=60.0,
-            value=default_shiller,
-            step=0.1,
-            help="自動取得失敗時の手動入力"
-        )
+    st.caption("💡 毎週日曜日に更新してください")
 
     st.markdown("---")
 
     # FANG+設定
-    st.subheader("💎 FANG+インデックス")
+    st.subheader("💎 FANG+設定")
+    fang_investment = st.number_input(
+        "投資額（円）",
+        min_value=0,
+        max_value=10000000,
+        value=400000,
+        step=10000
+    )
 
-    if FANG_MODULE_OK:
-        # 基準価額の自動取得ボタン
-        if st.button("📡 基準価額を自動取得", help="Yahoo!ファイナンスから取得します"):
-            with st.spinner("取得中..."):
-                _auto_price = get_fang_current_price()
-            if _auto_price > 0:
-                st.session_state["fang_price_auto"] = _auto_price
-                st.success(f"取得成功: ¥{_auto_price:,.0f}")
-            else:
-                st.warning("自動取得失敗。手動で入力してください。")
-
-        # 手動入力（自動取得失敗時のバックアップ）
-        fang_manual_price = st.number_input(
-            "現在の基準価額（手動・任意）",
-            min_value=0.0,
-            value=0.0,
-            step=100.0,
-            help="自動取得が失敗した場合に入力してください"
-        )
-
-        # 使用する価格を決定（セッション自動取得 > 手動入力）
-        _auto = st.session_state.get("fang_price_auto", 0.0)
-        fang_display_price = _auto if _auto > 0 else fang_manual_price
-
-        # 購入履歴追加フォーム
-        with st.expander("➕ 積立購入を追加"):
-            _col1, _col2 = st.columns(2)
-            with _col1:
-                _new_date = st.date_input("購入日", value=None, key="fang_date")
-                _new_amount = st.number_input("投資額（円）", min_value=0, step=10000, key="fang_amount")
-            with _col2:
-                _new_price = st.number_input("取得単価（円）", min_value=0.0, step=100.0, key="fang_price_input")
-                _new_memo = st.text_input("メモ（任意）", placeholder="例: NISA成長投資枠", key="fang_memo")
-            if st.button("追加して保存", key="fang_add"):
-                if _new_date and _new_amount > 0 and _new_price > 0:
-                    try:
-                        add_fang_purchase(str(_new_date), _new_amount, _new_price, _new_memo)
-                        st.success("✅ 購入履歴を追加しました！")
-                        st.rerun()
-                    except Exception as _e:
-                        st.error(f"エラー: {_e}")
-                else:
-                    st.warning("購入日・投資額・取得単価を入力してください。")
-
-        # サマリー計算（後続の計算ロジックで使用）
-        fang_summary = calc_fang_summary(current_price=fang_display_price)
-        fang_investment = fang_summary["total_investment"]
-        fang_purchase_price = fang_summary["avg_cost"]  # 加重平均
-
-    else:
-        # fang_manager.py が見つからない場合は旧来の手動入力
-        st.warning("⚠️ fang_manager.py が見つかりません。手動入力モードです。")
-        fang_investment = st.number_input("投資額（円）", min_value=0, max_value=10000000, value=100000, step=10000)
-        fang_purchase_price = st.number_input("購入時の基準価額", min_value=0.0, value=84919.0, step=100.0)
-        fang_display_price = 0.0
-        fang_summary = None
+    fang_purchase_price = st.number_input(
+        "購入時の基準価額",
+        min_value=0.0,
+        value=0.0,
+        step=100.0,
+        help="購入後に入力してください"
+    )
 
     # 現金
     st.subheader("💵 現金")
@@ -979,61 +339,27 @@ with st.sidebar:
     )
 
     st.markdown("---")
-
-    # シクリカル株購入記録
-    st.subheader("📊 シクリカル株")
-
-    if CYCLICAL_PURCHASE_MODULE_OK:
-        # 購入記録追加フォーム
-        with st.expander("➕ 購入記録を追加"):
-            _col1, _col2 = st.columns(2)
-            with _col1:
-                _cyc_date = st.date_input("購入日", value=None, key="cyc_date")
-                _cyc_code = st.text_input("銘柄コード（4桁）", placeholder="例: 9127", key="cyc_code")
-                _cyc_name = st.text_input("企業名", placeholder="例: 正栄汽船", key="cyc_name")
-            with _col2:
-                _cyc_price = st.number_input("購入単価（円）", min_value=0.0, step=100.0, key="cyc_price")
-                _cyc_shares = st.number_input("購入株数", min_value=0, step=1, key="cyc_shares")
-                _cyc_memo = st.text_input("メモ（任意）", placeholder="例: 11月分積立", key="cyc_memo")
-            
-            # 投資額を自動表示
-            if _cyc_price > 0 and _cyc_shares > 0:
-                _cyc_investment = _cyc_price * _cyc_shares
-                st.info(f"💰 投資額: ¥{_cyc_investment:,.0f}")
-            
-            if st.button("追加して保存", key="cyc_add"):
-                if _cyc_date and _cyc_code and _cyc_name and _cyc_price > 0 and _cyc_shares > 0:
-                    try:
-                        add_cyclical_purchase(
-                            purchase_date=str(_cyc_date),
-                            ticker_code=_cyc_code,
-                            company_name=_cyc_name,
-                            purchase_price=_cyc_price,
-                            shares=_cyc_shares,
-                            memo=_cyc_memo
-                        )
-                        st.success("✅ 購入記録を追加しました！")
-                        st.rerun()
-                    except Exception as _e:
-                        st.error(f"エラー: {_e}")
-                else:
-                    st.warning("すべての必須項目を入力してください。")
-        
-        # 購入履歴表示
-        with st.expander("📜 購入履歴を確認"):
-            _history = get_purchase_history()
-            if not _history.empty:
-                st.dataframe(_history, use_container_width=True, hide_index=True)
-                st.caption(f"合計: {len(_history)}件の購入記録")
-            else:
-                st.info("購入履歴がありません。")
-    
-    else:
-        st.warning("⚠️ cyclical_purchase_manager.py が見つかりません。")
-
-    st.markdown("---")
     st.caption("毎週日曜日にバフェット指数を更新")
-    st.caption("シラーPERは自動更新（24時間キャッシュ）")
+
+    # ---- たーちゃん哲学2.0 キャッシュ管理 ----
+    if TARGET_PRICES_AVAILABLE:
+        st.markdown("---")
+        st.subheader("🎯 売却目標価格")
+        cache = load_cache()
+        if cache:
+            oldest = min(
+                (v["cached_at"] for v in cache.values() if "cached_at" in v),
+                default=None,
+            )
+            days_old = (datetime.now() - oldest).days if oldest else "-"
+            st.caption(f"キャッシュ: {len(cache)}銘柄 / 更新{days_old}日前")
+        else:
+            st.caption("キャッシュ: なし")
+        if st.button("🔄 キャッシュを更新", use_container_width=True):
+            clear_cache()
+            st.success("削除しました。再読み込みで再計算されます。")
+            st.rerun()
+        st.caption("※ 7日間有効。銘柄追加後に更新推奨。")
 
 # データ取得
 bonds = get_bond_yields()
@@ -1045,7 +371,7 @@ indices = get_major_indices()
 # ========================================
 st.markdown('<div class="section-header">🌍 マクロ経済指標</div>', unsafe_allow_html=True)
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("### 🔴 債券利回り")
@@ -1094,7 +420,7 @@ with col2:
             showlegend=False,
             template="plotly_dark"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 with col3:
     st.markdown("### 💰 バフェット指数")
@@ -1111,89 +437,8 @@ with col3:
     else:
         st.success("✅ 適正水準")
 
-with col4:
-    st.markdown("### 📊 シラーPER")
-    st.metric("シラーPER (倍)", f"{shiller_pe:.1f}倍")
-
-    if shiller_pe > 30:
-        st.error("🚨 歴史的割高")
-        st.error("期待リターン低め。")
-    elif shiller_pe > 25:
-        st.warning("⚠️ 割高")
-        st.warning("慎重に投資。")
-    elif shiller_pe > 20:
-        st.info("😐 やや割高")
-    elif shiller_pe > 15:
-        st.success("✅ 適正水準")
-    else:
-        st.success("🎯 割安！")
-
 # ========================================
-# 2. 総合市場評価（米国株）
-# ========================================
-st.markdown('<div class="section-header">🎯 総合市場評価（米国株）</div>', unsafe_allow_html=True)
-
-# スコア計算
-market_score, score_details = calculate_market_score(
-    buffett_indicator,
-    shiller_pe,
-    vix_data['current'],
-    bonds['spread']
-)
-
-# 詳細判断取得
-us_judgment = get_detailed_us_market_judgment(
-    buffett_indicator,
-    shiller_pe,
-    vix_data['current'],
-    bonds['spread'],
-    market_score
-)
-
-# 2列レイアウト
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    # スコア表示
-    st.metric("総合スコア", f"{market_score:+d} / 10")
-
-    # 判定レベル表示
-    if us_judgment['color'] == 'success':
-        st.success(f"**{us_judgment['level']}**")
-    elif us_judgment['color'] == 'info':
-        st.info(f"**{us_judgment['level']}**")
-    elif us_judgment['color'] == 'warning':
-        st.warning(f"**{us_judgment['level']}**")
-    else:
-        st.error(f"**{us_judgment['level']}**")
-
-with col2:
-    # 各指標の詳細
-    st.subheader("📊 各指標の評価")
-
-    detail_data = []
-    for indicator, value, evaluation, score_str in score_details:
-        detail_data.append({
-            '指標': indicator,
-            '現在値': value,
-            '評価': evaluation,
-            'スコア': score_str
-        })
-
-    st.dataframe(
-        pd.DataFrame(detail_data),
-        use_container_width=True,
-        hide_index=True
-    )
-
-# 詳細分析
-with st.expander(f"🔍 詳細分析：{us_judgment['pattern']}", expanded=True):
-    st.markdown(us_judgment['analysis'])
-    st.markdown("---")
-    st.markdown(us_judgment['recommendation'])
-
-# ========================================
-# 3. ポートフォリオ全体サマリー
+# 2. ポートフォリオ全体サマリー
 # ========================================
 st.markdown('<div class="section-header">💼 ポートフォリオ全体</div>', unsafe_allow_html=True)
 
@@ -1201,24 +446,17 @@ st.markdown('<div class="section-header">💼 ポートフォリオ全体</div>'
 cyclical_df = load_cyclical_portfolio()
 
 # FANG+評価額計算
-if FANG_MODULE_OK and fang_summary is not None:
-    # fang_manager.py による正確な円建て計算
-    fang_current_value = fang_summary["current_value"]
-    fang_profit        = fang_summary["profit"]
-    fang_profit_pct    = fang_summary["profit_pct"]
-    fang_avg_cost      = fang_summary["avg_cost"]
-    fang_price_source  = fang_summary["price_source"]
-else:
-    # フォールバック: 旧来の QQQ 連動計算
-    fang_current_value = fang_investment
-    fang_profit = 0
-    fang_profit_pct = 0
-    if fang_purchase_price > 0:
-        qqq_data = get_stock_price('QQQ')
-        if qqq_data['price'] > 0:
-            fang_current_value = fang_investment * (qqq_data['price'] / fang_purchase_price)
-            fang_profit = fang_current_value - fang_investment
-            fang_profit_pct = (fang_profit / fang_investment * 100)
+fang_current_value = fang_investment
+fang_profit = 0
+fang_profit_pct = 0
+
+if fang_purchase_price > 0:
+    # 実際にはQQQの価格を取得して計算
+    qqq_data = get_stock_price('QQQ')
+    if qqq_data['price'] > 0 and fang_purchase_price > 0:
+        fang_current_value = fang_investment * (qqq_data['price'] / fang_purchase_price)
+        fang_profit = fang_current_value - fang_investment
+        fang_profit_pct = (fang_profit / fang_investment * 100)
 
 # シクリカル株評価額計算
 cyclical_total_cost = 0
@@ -1290,173 +528,311 @@ fig.update_layout(
     height=300,
     template="plotly_dark"
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 # ========================================
-# 4. シクリカル株詳細分析
+# 3. シクリカル株詳細
 # ========================================
-st.markdown('<div class="section-header">📊 シクリカル株 詳細分析</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">📊 シクリカル株 詳細</div>', unsafe_allow_html=True)
 
-# マクロ環境データ
-macro_env = {
-    'yield_curve': bonds['spread'],
-    'buffett': buffett_indicator,
-    'shiller': shiller_pe,
-    'vix': vix_data['current']
-}
+if not cyclical_df.empty:
+    # 詳細テーブル作成
+    detail_rows = []
 
-# 詳細データ取得
-detailed_stocks = get_cyclical_detailed_data()
+    for idx, row in cyclical_df.iterrows():
+        ticker = str(row['銘柄コード']) + '.T'
+        stock_name = row['銘柄名']
+        purchase_price = float(row['購入価格'])
+        shares = float(row['購入株数'])
+        purchase_date = row['購入日']
 
-if detailed_stocks:
-    st.info(f"📊 保有銘柄：{len(detailed_stocks)}銘柄")
+        cost = purchase_price * shares
 
-    # 各銘柄の詳細分析
-    for stock_data in detailed_stocks:
+        # 現在価格取得
+        stock_data = get_stock_price(ticker)
+        current_price = stock_data['price'] if stock_data['price'] > 0 else purchase_price
+        current_value = current_price * shares
+        profit = current_value - cost
+        profit_pct = (profit / cost * 100) if cost > 0 else 0
 
-        # Code 5統合: 高度な売却シグナル判定
-        if SIGNAL_EVALUATOR_OK:
-            try:
-                signal_result = evaluate_stock_signal(
-                    ticker_code=str(stock_data['ticker_code']),
-                    purchase_price=stock_data['purchase_price'],
-                    purchase_date=stock_data['purchase_date'],
-                    shares=stock_data['shares'],
-                    industry='',  # 業種情報がない場合は空文字
-                    purchase_per=None,
-                    purchase_roe=None,
-                    purchase_equity=None
-                )
-                
-                # シグナル強度に応じたアイコン
-                if signal_result['signal_strength'] >= 8:
-                    signal_icon = "🚨"
-                elif signal_result['signal_strength'] >= 6:
-                    signal_icon = "⚠️"
-                elif signal_result['signal_strength'] >= 4:
-                    signal_icon = "💡"
-                elif signal_result['signal_strength'] >= 2:
-                    signal_icon = "💡"
-                else:
-                    signal_icon = "✅"
-                
-                # 表示
-                with st.expander(
-                        f"{signal_icon} **{stock_data['ticker_code']} {stock_data['stock_name']}** - {signal_result['overall']} ({signal_result['signal_strength']}/10点)",
-                        expanded=True
-                ):
-                    # 基本情報
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric(
-                            "現在価格",
-                            f"¥{stock_data['current_price']:,.0f}",
-                            f"{stock_data['profit_pct']:+.1f}%"
-                        )
-                    
-                    with col2:
-                        current_per = signal_result['current_per']
-                        st.metric("PER", f"{current_per:.1f}倍" if current_per else "N/A")
-                    
-                    with col3:
-                        st.metric("配当", f"{stock_data['dividend_yield']:.1f}%")
-                    
-                    with col4:
-                        st.metric("シグナル強度", f"{signal_result['signal_strength']}/10")
-                    
-                    # 推奨アクション
-                    st.markdown(f"**📋 推奨アクション**: {signal_result['action']}")
-                    
-                    # 検出されたシグナル
-                    if len(signal_result['signals']) > 0:
-                        st.markdown("**🚨 検出されたシグナル**:")
-                        for sig in signal_result['signals']:
-                            level_icon = "🚨" if sig['level'] == '高' else "⚠️" if sig['level'] == '中' else "💡"
-                            st.markdown(f"{level_icon} **[{sig['category']}]** {sig['message']}")
-                            st.caption(f"→ {sig['detail']}")
-                    else:
-                        st.success("✅ 重大な問題は検出されませんでした")
-                    
-                    # 詳細データ
-                    with st.expander("📊 詳細データを表示"):
-                        detail_col1, detail_col2 = st.columns(2)
-                        with detail_col1:
-                            st.write("**株価情報**")
-                            st.write(f"52週高値: ¥{signal_result['stock_data'].get('52週高値', 0):,.0f}")
-                            st.write(f"52週安値: ¥{signal_result['stock_data'].get('52週安値', 0):,.0f}")
-                        with detail_col2:
-                            st.write("**財務情報**")
-                            if signal_result['current_roe']:
-                                st.write(f"ROE: {signal_result['current_roe']:.1f}%")
-                            if signal_result['current_equity']:
-                                st.write(f"自己資本比率: {signal_result['current_equity']:.1f}%")
-            
-            except Exception as e:
-                st.error(f"⚠️ Code 5判定エラー: {e}")
-                # フォールバック: 元の判定を表示
-                st.info("元の判定システムで表示します")
-                judgment = get_detailed_cyclical_judgment(
-                    ticker_code=stock_data['ticker_code'],
-                    stock_name=stock_data['stock_name'],
-                    current_data={
-                        'per': stock_data['per'],
-                        'dividend_yield': stock_data['dividend_yield'],
-                        'equity_ratio': stock_data['equity_ratio'],
-                        'roe': stock_data['roe'],
-                        'price_position': stock_data['price_position']
-                    },
-                    macro_environment=macro_env
-                )
-                with st.expander(
-                        f"**{stock_data['ticker_code']} {stock_data['stock_name']}** - {judgment['level']} (スコア: {judgment['score']}点)",
-                        expanded=True
-                ):
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("現在価格", f"¥{stock_data['current_price']:,.0f}", f"{stock_data['profit_pct']:+.1f}%")
-                    with col2:
-                        st.metric("PER", f"{stock_data['per']:.1f}倍")
-                    with col3:
-                        st.metric("配当", f"{stock_data['dividend_yield']:.1f}%")
-                    with col4:
-                        st.metric("自己資本比率", f"{stock_data['equity_ratio']:.1f}%")
-                    st.markdown(judgment['analysis'])
-        
-        else:
-            # signal_evaluator.py がない場合は元の判定
-            judgment = get_detailed_cyclical_judgment(
-                ticker_code=stock_data['ticker_code'],
-                stock_name=stock_data['stock_name'],
-                current_data={
-                    'per': stock_data['per'],
-                    'dividend_yield': stock_data['dividend_yield'],
-                    'equity_ratio': stock_data['equity_ratio'],
-                    'roe': stock_data['roe'],
-                    'price_position': stock_data['price_position']
-                },
-                macro_environment=macro_env
-            )
-            with st.expander(
-                    f"**{stock_data['ticker_code']} {stock_data['stock_name']}** - {judgment['level']} (スコア: {judgment['score']}点)",
-                    expanded=True
-            ):
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("現在価格", f"¥{stock_data['current_price']:,.0f}", f"{stock_data['profit_pct']:+.1f}%")
-                with col2:
-                    st.metric("PER", f"{stock_data['per']:.1f}倍")
-                with col3:
-                    st.metric("配当", f"{stock_data['dividend_yield']:.1f}%")
-                with col4:
-                    st.metric("自己資本比率", f"{stock_data['equity_ratio']:.1f}%")
-                st.markdown(judgment['analysis'])
+        detail_rows.append({
+            '銘柄コード': row['銘柄コード'],
+            '銘柄名': stock_name,
+            '購入価格': f"¥{purchase_price:,.0f}",
+            '現在価格': f"¥{current_price:,.0f}",
+            '株数': int(shares),
+            '取得額': f"¥{cost:,.0f}",
+            '評価額': f"¥{current_value:,.0f}",
+            '損益': f"¥{profit:+,.0f}",
+            '損益率': f"{profit_pct:+.2f}%",
+            '購入日': purchase_date
+        })
+
+    detail_df = pd.DataFrame(detail_rows)
+
+    # カラーコーディング（損益率列のみ）
+    def highlight_profit(s):
+        """損益率列に色を付ける"""
+        if s.name == '損益率':
+            return ['background-color: #1a4d2e' if '+' in str(v)
+                   else 'background-color: #4d1a1a' if '-' in str(v)
+                   else '' for v in s]
+        return ['' for _ in s]
+
+    st.dataframe(
+        detail_df.style.apply(highlight_profit),
+        width="stretch",
+        height=400
+    )
+
+    # 簡易売却シグナル
+    st.subheader("🚨 売却シグナル")
+
+    signals = []
+    for idx, row in cyclical_df.iterrows():
+        ticker = str(row['銘柄コード']) + '.T'
+        stock_name = row['銘柄名']
+        purchase_price = float(row['購入価格'])
+        shares = float(row['購入株数'])
+        cost = purchase_price * shares
+
+        stock_data = get_stock_price(ticker)
+        current_price = stock_data['price'] if stock_data['price'] > 0 else purchase_price
+        current_value = current_price * shares
+        profit_pct = ((current_value - cost) / cost * 100) if cost > 0 else 0
+
+        # シグナル判定
+        signal_level = 0
+        signal_reasons = []
+
+        # 損益率チェック
+        if profit_pct <= -30:
+            signal_level += 3
+            signal_reasons.append("⚠️ 損切りライン（-30%以下）")
+        elif profit_pct >= 30:
+            signal_level += 2
+            signal_reasons.append("💰 利益確定ライン（+30%以上）")
+
+        # 変動率チェック
+        if abs(stock_data['change_pct']) > 5:
+            signal_level += 1
+            signal_reasons.append(f"📈 大幅変動（{stock_data['change_pct']:+.2f}%）")
+
+        if signal_level > 0:
+            signals.append({
+                '銘柄': f"{row['銘柄コード']} {stock_name}",
+                'シグナル強度': signal_level,
+                '理由': ' / '.join(signal_reasons),
+                '損益率': f"{profit_pct:+.2f}%"
+            })
+
+    if signals:
+        signal_df = pd.DataFrame(signals)
+        signal_df = signal_df.sort_values('シグナル強度', ascending=False)
+
+        st.dataframe(
+            signal_df,
+            width="stretch",
+            hide_index=True
+        )
+    else:
+        st.success("✅ 現在、売却シグナルはありません。保有継続。")
 
 else:
     st.info("シクリカル株の保有データがありません。")
 
 # ========================================
-# 5. 主要指数
+# 3-2. 売却目標価格（たーちゃん哲学2.0）
+# ========================================
+st.markdown('<div class="section-header">🎯 売却目標価格（たーちゃん哲学2.0）</div>', unsafe_allow_html=True)
+
+if not TARGET_PRICES_AVAILABLE:
+    st.warning("⚠️ auto_per_estimator.py が見つかりません。リポジトリに追加してください。")
+elif cyclical_df.empty:
+    st.info("シクリカル株の保有データがありません。")
+else:
+    st.caption(
+        "過去52週の株価データから銘柄ごとに現実的な天井PERを推定。"
+        "画一的なPER 12〜15倍ではなく、各銘柄の特性に合わせた個別最適化目標。"
+    )
+
+    # NTT除外オプション
+    show_ntt = st.checkbox("NTT（長期配当ホールド）も含める", value=False, key="show_ntt")
+
+    # 計算対象を決定
+    target_df = cyclical_df.copy()
+    if not show_ntt:
+        target_df = target_df[target_df['銘柄コード'].astype(str) != '9432']
+
+    if target_df.empty:
+        st.info("表示対象の銘柄がありません（NTTを含める場合はチェックを入れてください）。")
+    else:
+        # ---- サマリーテーブル ----
+        st.subheader("📊 全銘柄サマリー")
+
+        summary_rows = []
+        all_targets = {}   # ticker(コードのみ) → result
+
+        progress = st.progress(0, text="目標価格を計算中...")
+
+        for i, (_, row) in enumerate(target_df.iterrows()):
+            ticker_code = str(int(row['銘柄コード']))
+            ticker_full = ticker_code + '.T'
+            name = row['銘柄名']
+            purchase_price = float(row['購入価格'])
+
+            progress.progress((i + 1) / len(target_df), text=f"計算中: {name}...")
+
+            # 現在価格
+            stock_data = get_stock_price(ticker_full)
+            current_price = stock_data['price'] if stock_data['price'] > 0 else purchase_price
+
+            # PER / EPS
+            fundamentals = get_stock_fundamentals(ticker_full)
+            per = fundamentals['per']
+            eps = fundamentals['eps']
+
+            if not per or per <= 0 or not eps or eps <= 0:
+                summary_rows.append({
+                    '銘柄': f"{name}（{ticker_code}）",
+                    '現在価格': f"¥{current_price:,.0f}",
+                    '現在PER': '-',
+                    '🟡 保守的': '-',
+                    '🟢 標準': '-',
+                    '🚀 楽観的': '-',
+                    '信頼度': '-',
+                })
+                continue
+
+            try:
+                result = get_target_prices_auto(ticker_code, current_price, per, eps, name)
+                all_targets[ticker_code] = {
+                    'result': result,
+                    'current_price': current_price,
+                    'per': per,
+                    'name': name,
+                }
+                t = result['targets']
+                pct_to_t1 = (t[0]['price'] - current_price) / current_price * 100
+
+                alert = ''
+                if pct_to_t1 <= 5:
+                    alert = ' 🚨'
+                elif pct_to_t1 <= 15:
+                    alert = ' ⚠️'
+
+                summary_rows.append({
+                    '銘柄': f"{name}（{ticker_code}）",
+                    '現在価格': f"¥{current_price:,.0f}",
+                    '現在PER': f"{per:.1f}倍",
+                    '🟡 保守的': f"¥{t[0]['price']:,.0f}  (+{t[0]['return_pct']}%){alert}",
+                    '🟢 標準': f"¥{t[1]['price']:,.0f}  (+{t[1]['return_pct']}%)",
+                    '🚀 楽観的': f"¥{t[2]['price']:,.0f}  (+{t[2]['return_pct']}%)",
+                    '信頼度': f"{result['confidence']}%",
+                })
+            except Exception as e:
+                summary_rows.append({
+                    '銘柄': f"{name}（{ticker_code}）",
+                    '現在価格': f"¥{current_price:,.0f}",
+                    '現在PER': f"{per:.1f}倍",
+                    '🟡 保守的': f"エラー: {e}",
+                    '🟢 標準': '-',
+                    '🚀 楽観的': '-',
+                    '信頼度': '-',
+                })
+
+        progress.empty()
+
+        if summary_rows:
+            st.dataframe(
+                pd.DataFrame(summary_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        # 読み方説明
+        with st.expander("📖 売却戦略の読み方"):
+            st.markdown("""
+| 段階 | タイミング | 売却比率 | 考え方 |
+|------|-----------|---------|--------|
+| 🟡 保守的 | 最初の利確 | **40%** | 過去52週高値レベル。ほぼ確実に到達可能。ここで4割を確定。 |
+| 🟢 標準 | メインの利確 | **40%** | 景気回復時の現実的な天井。ここで大部分を確定。 |
+| 🚀 楽観的 | 残りの利確 | **20%** | 景気ピーク時のベストケース。残り2割で最大リターンを狙う。 |
+
+⚠️ 保守的目標に近づいたら Code 5 のシグナルも確認すること。
+            """)
+
+        st.markdown("---")
+
+        # ---- 銘柄別詳細 ----
+        if all_targets:
+            st.subheader("🔍 銘柄別詳細")
+
+            tab_names = [v['name'] for v in all_targets.values()]
+            tabs = st.tabs(tab_names)
+
+            for tab, (ticker_code, data) in zip(tabs, all_targets.items()):
+                with tab:
+                    result = data['result']
+                    current_price = data['current_price']
+                    per = data['per']
+
+                    # メタ情報
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        conf = result['confidence']
+                        badge = "🟢" if conf >= 70 else "🟡" if conf >= 50 else "🔴"
+                        st.metric("信頼度", f"{badge} {conf}%")
+                    with c2:
+                        st.metric("推定方法", result['estimation_method'])
+                    with c3:
+                        if '52w_data' in result:
+                            d = result['52w_data']
+                            st.metric(
+                                "52週高値",
+                                f"¥{d['high']:,.0f}",
+                                f"PER {d['high_per']}倍",
+                            )
+
+                    st.caption(f"根拠: {result['reason']}")
+                    st.markdown("")
+
+                    # 3段階の目標カード
+                    cols = st.columns(3)
+                    icons = ['🟡', '🟢', '🚀']
+
+                    for col, target, icon in zip(cols, result['targets'], icons):
+                        with col:
+                            pct_to_target = (target['price'] - current_price) / current_price * 100
+                            if pct_to_target <= 5:
+                                status = "🚨 目標到達圏"
+                            elif pct_to_target <= 20:
+                                status = "⚠️ 目標接近中"
+                            else:
+                                status = f"残り +{pct_to_target:.0f}%"
+
+                            st.metric(
+                                label=f"{icon} {target['level']}（{target['timeframe']}）",
+                                value=f"¥{target['price']:,.0f}",
+                                delta=f"+{target['return_pct']}%",
+                            )
+                            st.caption(
+                                f"目標PER: **{target['per']}倍** ／ 売却: {target['sell_ratio']}%  \n{status}"
+                            )
+
+                    # 売却ガイド
+                    st.markdown("")
+                    t = result['targets']
+                    st.info(
+                        f"**{result['name']} 売却ガイド**\n\n"
+                        f"① 🟡 ¥{t[0]['price']:,.0f} 到達 → **{t[0]['sell_ratio']}%売却**（{t[0]['timeframe']}）\n\n"
+                        f"② 🟢 ¥{t[1]['price']:,.0f} 到達 → **{t[1]['sell_ratio']}%売却**（{t[1]['timeframe']}）\n\n"
+                        f"③ 🚀 ¥{t[2]['price']:,.0f} 到達 → **{t[2]['sell_ratio']}%売却・全売却**（{t[2]['timeframe']}）\n\n"
+                        "⚠️ Code 5 でシグナル強度 6点以上 → 目標未達でも売却を検討"
+                    )
+
+# ========================================
+# 4. 主要指数
 # ========================================
 st.markdown('<div class="section-header">📈 主要指数</div>', unsafe_allow_html=True)
 
@@ -1472,7 +848,7 @@ if indices:
             )
 
 # ========================================
-# 6. 総合判定
+# 5. 総合判定
 # ========================================
 st.markdown('<div class="section-header">🎯 総合判定</div>', unsafe_allow_html=True)
 
