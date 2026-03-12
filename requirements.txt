@@ -6,3 +6,5 @@ openpyxl
 plotly
 beautifulsoup4==4.12.3
 beautifulsoup4
+gspread
+google-auth
