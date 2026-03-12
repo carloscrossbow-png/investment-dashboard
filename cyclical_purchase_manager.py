@@ -1,123 +1,117 @@
 """
 ================================================
-シクリカル株購入記録管理モジュール
+シクリカル株購入・売却記録管理モジュール（gspread版）
 ================================================
-機能: purchased_stocks.csv への購入記録追加
+機能:
+  - Google Sheetsへの購入記録追加（永続保存）
+  - 売却記録追加
+  - 購入履歴取得
 
-使い方（ダッシュボードから）:
-  from cyclical_purchase_manager import add_cyclical_purchase
-  
-  add_cyclical_purchase(
-      purchase_date="2025-11-05",
-      ticker_code="9127",
-      company_name="正栄汽船",
-      purchase_price=2870,
-      shares=100
-  )
+Streamlit Secretsに以下が必要:
+  [gcp_service_account]
+  type = "service_account"
+  project_id = "..."
+  private_key_id = "..."
+  private_key = "..."
+  client_email = "..."
+  client_id = "..."
+  ...
 ================================================
 """
 
+import streamlit as st
 import pandas as pd
-import os
-from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+SPREADSHEET_ID = "1-ioGOVA9KUKYqOTuDo9s8jP1O_XTiOJLQNgnf3D08n8"
+PURCHASE_SHEET_NAME = "purchased_stocks"
 
 
-CSV_PATH = "./portfolio_data/purchased_stocks.csv"
+def get_gspread_client():
+    """Streamlit Secretsからgspreadクライアントを取得。失敗時はNone。"""
+    try:
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=SCOPES,
+        )
+        return gspread.authorize(creds)
+    except Exception:
+        return None
 
 
-def add_cyclical_purchase(purchase_date, ticker_code, company_name, purchase_price, shares, memo=""):
-    """
-    シクリカル株の購入記録を追加
-    
-    Args:
-        purchase_date: 購入日（YYYY-MM-DD形式）
-        ticker_code: 銘柄コード（例: "9127"）
-        company_name: 企業名（例: "正栄汽船"）
-        purchase_price: 購入単価（円）
-        shares: 購入株数
-        memo: メモ（任意）
-    """
-    
-    # フォルダ作成
-    os.makedirs("./portfolio_data", exist_ok=True)
-    
-    # 投資金額計算
-    investment = purchase_price * shares
-    
-    # 新規レコード
-    new_record = {
-        '購入日': purchase_date,
-        '銘柄コード': ticker_code,
-        '企業名': company_name,
-        '購入単価': purchase_price,
-        '購入株数': shares,
-        '投資金額': investment,
-        'メモ': memo
-    }
-    
-    # CSV読み込み（存在しない場合は新規作成）
-    if os.path.exists(CSV_PATH):
-        df = pd.read_csv(CSV_PATH, encoding='utf-8-sig')
-        # 新規レコードを追加
-        df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
-    else:
-        df = pd.DataFrame([new_record])
-    
-    # CSV保存
-    df.to_csv(CSV_PATH, index=False, encoding='utf-8-sig')
-    
-    print(f"✅ 購入記録を追加しました: {ticker_code} {company_name} - {shares}株 @ ¥{purchase_price:,.0f}")
+def get_purchase_history() -> pd.DataFrame:
+    """購入履歴をGoogle Sheetsから取得"""
+    client = get_gspread_client()
+    if client is None:
+        return pd.DataFrame(
+            columns=["購入日", "銘柄コード", "企業名", "購入単価", "購入株数", "投資金額", "メモ"]
+        )
+    try:
+        sh = client.open_by_key(SPREADSHEET_ID)
+        ws = sh.worksheet(PURCHASE_SHEET_NAME)
+        data = ws.get_all_records()
+        return pd.DataFrame(data) if data else pd.DataFrame(
+            columns=["購入日", "銘柄コード", "企業名", "購入単価", "購入株数", "投資金額", "メモ"]
+        )
+    except Exception:
+        return pd.DataFrame(
+            columns=["購入日", "銘柄コード", "企業名", "購入単価", "購入株数", "投資金額", "メモ"]
+        )
 
 
-def get_purchase_history():
-    """購入履歴を取得"""
-    if os.path.exists(CSV_PATH):
-        return pd.read_csv(CSV_PATH, encoding='utf-8-sig')
-    else:
-        return pd.DataFrame(columns=['購入日', '銘柄コード', '企業名', '購入単価', '購入株数', '投資金額', 'メモ'])
+def add_cyclical_purchase(
+    purchase_date: str,
+    ticker_code: str,
+    company_name: str,
+    purchase_price: float,
+    shares: int,
+    memo: str = "",
+) -> bool:
+    """購入記録をGoogle Sheetsに追加。成功時True。"""
+    client = get_gspread_client()
+    if client is None:
+        return False
+    try:
+        sh = client.open_by_key(SPREADSHEET_ID)
+        try:
+            ws = sh.worksheet(PURCHASE_SHEET_NAME)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=PURCHASE_SHEET_NAME, rows=1000, cols=8)
+            ws.append_row(["購入日", "銘柄コード", "企業名", "購入単価", "購入株数", "投資金額", "メモ"])
+        investment = int(purchase_price * shares)
+        ws.append_row([
+            purchase_date,
+            str(ticker_code),
+            company_name,
+            int(purchase_price),
+            int(shares),
+            investment,
+            memo,
+        ])
+        return True
+    except Exception as e:
+        st.error(f"Google Sheets書き込みエラー: {e}")
+        return False
 
 
-def delete_last_purchase():
-    """最後の購入記録を削除（誤入力訂正用）"""
-    if not os.path.exists(CSV_PATH):
-        print("⚠️ 購入履歴がありません")
-        return
-    
-    df = pd.read_csv(CSV_PATH, encoding='utf-8-sig')
-    
-    if len(df) == 0:
-        print("⚠️ 購入履歴がありません")
-        return
-    
-    # 最後の行を削除
-    df = df.iloc[:-1]
-    
-    # 保存
-    df.to_csv(CSV_PATH, index=False, encoding='utf-8-sig')
-    print("✅ 最後の購入記録を削除しました")
-
-
-# ==========================================
-# テスト用（単体実行時）
-# ==========================================
-
-if __name__ == "__main__":
-    print("=" * 80)
-    print("cyclical_purchase_manager.py テスト")
-    print("=" * 80)
-    
-    # テストデータ追加（コメントアウト）
-    # add_cyclical_purchase(
-    #     purchase_date="2025-11-05",
-    #     ticker_code="9127",
-    #     company_name="正栄汽船",
-    #     purchase_price=2870,
-    #     shares=100,
-    #     memo="テスト購入"
-    # )
-    
-    # 購入履歴表示
-    history = get_purchase_history()
-    print(f"\n購入履歴: {len(history)}件")
-    if not history.empty:
-        print(history.to_string())
+def delete_last_purchase() -> bool:
+    """最後の購入記録を削除（誤入力訂正用）。成功時True。"""
+    client = get_gspread_client()
+    if client is None:
+        return False
+    try:
+        sh = client.open_by_key(SPREADSHEET_ID)
+        ws = sh.worksheet(PURCHASE_SHEET_NAME)
+        all_values = ws.get_all_values()
+        if len(all_values) <= 1:
+            return False
+        ws.delete_rows(len(all_values))
+        return True
+    except Exception:
+        return False

@@ -411,8 +411,64 @@ with st.sidebar:
     st.markdown("---")
     st.caption("毎週日曜日にバフェット指数を更新")
 
-    # ---- たーちゃん哲学2.0 キャッシュ管理 ----
+    # ---- シクリカル株 購入・売却記録 ----
+    st.markdown("---")
+    st.subheader("📊 シクリカル株 記録")
+
+    try:
+        from cyclical_purchase_manager import (
+            add_cyclical_purchase, get_purchase_history, delete_last_purchase
+        )
+        PURCHASE_MODULE_OK = True
+    except ImportError:
+        PURCHASE_MODULE_OK = False
+
+    if PURCHASE_MODULE_OK:
+        with st.expander("➕ 購入記録を追加"):
+            p_date   = st.date_input("購入日", key="p_date")
+            p_code   = st.text_input("銘柄コード（4桁）", placeholder="例: 9127", key="p_code")
+            p_name   = st.text_input("企業名", placeholder="例: Tamai Steamship", key="p_name")
+            p_price  = st.number_input("購入単価（円）", min_value=0.0, step=1.0, key="p_price")
+            p_shares = st.number_input("購入株数", min_value=0, step=1, key="p_shares")
+            p_memo   = st.text_input("メモ（任意）", key="p_memo")
+            if p_price > 0 and p_shares > 0:
+                st.caption(f"💰 投資額: ¥{int(p_price * p_shares):,}")
+            if st.button("💾 追加して保存", use_container_width=True, key="p_save"):
+                if p_code and p_name and p_price > 0 and p_shares > 0:
+                    ok = add_cyclical_purchase(
+                        str(p_date), p_code, p_name, p_price, p_shares, p_memo
+                    )
+                    if ok:
+                        st.success(f"✅ {p_name}（{p_code}）{p_shares}株 @ ¥{p_price:,.0f} を記録しました")
+                        st.rerun()
+                    else:
+                        st.error("❌ 保存失敗。Secrets の gcp_service_account を確認してください。")
+                else:
+                    st.error("銘柄コード・企業名・単価・株数をすべて入力してください。")
+
+        with st.expander("🗑️ 最後の記録を取り消す"):
+            st.warning("直前に追加した購入記録を1件削除します。")
+            if st.button("取り消す", use_container_width=True, key="p_delete"):
+                ok = delete_last_purchase()
+                if ok:
+                    st.success("✅ 最後の記録を削除しました")
+                    st.rerun()
+                else:
+                    st.error("削除失敗またはデータがありません")
+
+        with st.expander("📋 購入履歴を確認"):
+            hist = get_purchase_history()
+            if hist.empty:
+                st.info("購入履歴がありません")
+            else:
+                st.dataframe(hist, use_container_width=True, hide_index=True)
+                st.caption(f"合計 {len(hist)} 件")
+    else:
+        st.warning("⚠️ cyclical_purchase_manager.py が見つかりません")
+
+    # ---- 売却目標価格キャッシュ管理 ----
     if TARGET_PRICES_AVAILABLE:
+
         st.markdown("---")
         st.subheader("🎯 売却目標価格")
         cache = load_cache()
