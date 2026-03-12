@@ -370,6 +370,21 @@ with st.sidebar:
         if not _hist_df.empty:
             with st.expander("📋 購入履歴を確認"):
                 st.dataframe(_hist_df, use_container_width=True, hide_index=True)
+                st.caption(f"合計 {len(_hist_df)} 件")
+
+        with st.expander("🗑️ 最後の記録を取り消す"):
+            st.warning("直前に追加したFANG+購入記録を1件削除します。")
+            if st.button("取り消す", use_container_width=True, key="fang_delete"):
+                try:
+                    from fang_manager import delete_last_fang_purchase
+                    ok = delete_last_fang_purchase()
+                    if ok:
+                        st.success("✅ 最後の記録を削除しました")
+                        st.rerun()
+                    else:
+                        st.error("削除失敗またはデータがありません")
+                except Exception as e:
+                    st.error(f"削除失敗: {e}")
 
         # サマリー計算（ダッシュボード本体で使う変数を設定）
         _manual = fang_manual_price
