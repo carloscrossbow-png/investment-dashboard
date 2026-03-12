@@ -26,13 +26,41 @@ from datetime import datetime
 
 FANG_FUND_CODE = "04311181"  # iFreeNEXT FANG+インデックス
 
-# CSV保存先（Google Sheets連携がない場合のローカルパス）
-# Streamlit Cloud上ではGoogle Sheetsを使うこと
-LOCAL_CSV_PATH = os.path.expanduser(
-    "~/PyCharmMiscProject/株スクリーニング完成版/portfolio_data/fang_purchases.csv"
-)
+SPREADSHEET_ID = "1-ioGOVA9KUKYqOTuDo9s8jP1O_XTiOJLQNgnf3D08n8"
+FANG_SHEET_NAME = "fang_purchases"
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
 COLUMNS = ["購入日", "投資額", "取得単価", "口数", "メモ"]
+
+
+def _get_gspread_client():
+    """Streamlit Secretsからgspreadクライアントを取得。失敗時はNone。"""
+    try:
+        import streamlit as st
+        import gspread
+        from google.oauth2.service_account import Credentials
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"], scopes=SCOPES
+        )
+        return gspread.authorize(creds)
+    except Exception:
+        return None
+
+
+def _get_or_create_sheet(client):
+    """fang_purchasesシートを取得（なければ作成）"""
+    import gspread
+    sh = client.open_by_key(SPREADSHEET_ID)
+    try:
+        return sh.worksheet(FANG_SHEET_NAME)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=FANG_SHEET_NAME, rows=1000, cols=6)
+        ws.append_row(COLUMNS)
+        return ws
 
 
 # ================================================
@@ -112,29 +140,25 @@ def get_fang_current_price(debug: bool = False) -> float:
 
 
 # ================================================
-# 2. 購入履歴 CSV 管理
+# 2. 購入履歴 Google Sheets 管理
 # ================================================
 
-def _resolve_csv_path(csv_path: str = "") -> str:
-    """CSVパスを決定（引数 > ローカルデフォルト）"""
-    if csv_path:
-        return csv_path
-    return LOCAL_CSV_PATH
-
-
 def load_fang_purchases(csv_path: str = "") -> pd.DataFrame:
-    """購入履歴CSVを読み込む。存在しない場合は空のDataFrameを返す。"""
-    path = _resolve_csv_path(csv_path)
-    if os.path.exists(path):
-        try:
-            df = pd.read_csv(path, encoding="utf-8-sig")
-            # 列が不足している場合は補完
+    """購入履歴をGoogle Sheetsから取得。失敗時は空DataFrame。"""
+    client = _get_gspread_client()
+    if client is None:
+        return pd.DataFrame(columns=COLUMNS)
+    try:
+        ws = _get_or_create_sheet(client)
+        data = ws.get_all_records()
+        if data:
+            df = pd.DataFrame(data)
             for col in COLUMNS:
                 if col not in df.columns:
                     df[col] = ""
             return df[COLUMNS]
-        except Exception:
-            pass
+    except Exception:
+        pass
     return pd.DataFrame(columns=COLUMNS)
 
 
@@ -145,27 +169,40 @@ def add_fang_purchase(
     memo: str = "",
     csv_path: str = "",
 ) -> pd.DataFrame:
-    """
-    購入履歴を追加して保存する。
-    purchase_date: "YYYY-MM-DD"
-    amount:        投資額（円）
-    unit_price:    取得単価（基準価額）
-    memo:          備考（任意）
-    """
-    df = load_fang_purchases(csv_path)
-    units = round(amount / unit_price, 6) if unit_price > 0 else 0.0
-    new_row = pd.DataFrame([{
-        "購入日":   purchase_date,
-        "投資額":   int(amount),
-        "取得単価": int(unit_price),
-        "口数":     units,
-        "メモ":     memo,
-    }])
-    df = pd.concat([df, new_row], ignore_index=True)
-    path = _resolve_csv_path(csv_path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    df.to_csv(path, index=False, encoding="utf-8-sig")
-    return df
+    """購入履歴をGoogle Sheetsに追加。"""
+    client = _get_gspread_client()
+    if client is None:
+        return pd.DataFrame(columns=COLUMNS)
+    try:
+        ws = _get_or_create_sheet(client)
+        units = round(amount / unit_price, 6) if unit_price > 0 else 0.0
+        ws.append_row([
+            purchase_date,
+            int(amount),
+            int(unit_price),
+            units,
+            memo,
+        ])
+    except Exception as e:
+        import streamlit as st
+        st.error(f"FANG+記録の保存失敗: {e}")
+    return load_fang_purchases()
+
+
+def delete_last_fang_purchase() -> bool:
+    """最後のFANG+購入記録を削除。成功時True。"""
+    client = _get_gspread_client()
+    if client is None:
+        return False
+    try:
+        ws = _get_or_create_sheet(client)
+        all_values = ws.get_all_values()
+        if len(all_values) <= 1:
+            return False
+        ws.delete_rows(len(all_values))
+        return True
+    except Exception:
+        return False
 
 
 # ================================================
