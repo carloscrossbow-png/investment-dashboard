@@ -170,22 +170,27 @@ def add_fang_purchase(
     csv_path: str = "",
 ) -> pd.DataFrame:
     """購入履歴をGoogle Sheetsに追加。"""
+    import streamlit as st
     client = _get_gspread_client()
     if client is None:
+        st.error("FANG+保存失敗: gspread認証エラー。Secretsの gcp_service_account を確認してください。")
         return pd.DataFrame(columns=COLUMNS)
     try:
         ws = _get_or_create_sheet(client)
         units = round(amount / unit_price, 6) if unit_price > 0 else 0.0
-        ws.append_row([
-            purchase_date,
+        row = [
+            str(purchase_date),
             int(amount),
             int(unit_price),
             units,
-            memo,
-        ])
+            str(memo),
+        ]
+        ws.append_row(row)
+        st.success(f"✅ Google Sheetsに保存しました（{purchase_date} / ¥{int(amount):,} / 単価{int(unit_price):,}）")
     except Exception as e:
-        import streamlit as st
-        st.error(f"FANG+記録の保存失敗: {e}")
+        st.error(f"FANG+記録の保存失敗: {type(e).__name__}: {e}")
+        import traceback
+        st.code(traceback.format_exc())
     return load_fang_purchases()
 
 
