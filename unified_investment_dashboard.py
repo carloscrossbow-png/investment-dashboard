@@ -237,13 +237,26 @@ def load_cyclical_portfolio():
             # 最も古い購入日を使用
             first_purchase = stock_records['購入日'].min()
 
+            # 購入時PERの加重平均（EPSを逆算するために保持）
+            avg_per = 0
+            if '購入時PER' in stock_records.columns:
+                try:
+                    valid = stock_records[pd.to_numeric(stock_records['購入時PER'], errors='coerce') > 0].copy()
+                    valid['購入時PER'] = pd.to_numeric(valid['購入時PER'], errors='coerce')
+                    if not valid.empty:
+                        w = valid['購入株数'] * valid['購入単価']
+                        avg_per = (w * valid['購入時PER']).sum() / w.sum() if w.sum() > 0 else 0
+                except Exception:
+                    avg_per = 0
+
             # 集約レコード作成
             aggregated_rows.append({
                 '銘柄コード': code,
                 '銘柄名': stock_records.iloc[0]['企業名'],
                 '購入価格': avg_price,
                 '購入株数': total_shares,
-                '購入日': first_purchase
+                '購入日': first_purchase,
+                '購入時PER': avg_per,
             })
 
         return pd.DataFrame(aggregated_rows)
@@ -829,10 +842,15 @@ else:
             stock_data = get_stock_price(ticker_full)
             current_price = stock_data['price'] if stock_data['price'] > 0 else purchase_price
 
-            # PER / EPS
-            fundamentals = get_stock_fundamentals(ticker_full)
-            per = fundamentals['per']
-            eps = fundamentals['eps']
+            # PER / EPS（購入時PERとEPS逆算方式）
+            purchase_per = float(row.get('購入時PER', 0) or 0)
+            if purchase_per > 0 and purchase_price > 0:
+                # EPS = 購入単価 ÷ 購入時PER
+                eps = round(purchase_price / purchase_per, 2)
+                # 現在PER = 現在株価 ÷ EPS
+                per = round(current_price / eps, 2) if eps > 0 else 0
+            else:
+                per, eps = 0, 0
 
             if not per or per <= 0 or not eps or eps <= 0:
                 summary_rows.append({
