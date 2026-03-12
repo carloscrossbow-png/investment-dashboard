@@ -17,6 +17,13 @@ try:
 except ImportError:
     TARGET_PRICES_AVAILABLE = False
 
+# FANG+ 管理モジュール
+try:
+    from fang_manager import get_fang_current_price, calc_fang_summary, add_fang_purchase, load_fang_purchases
+    FANG_MODULE_OK = True
+except ImportError:
+    FANG_MODULE_OK = False
+
 # ページ設定
 st.set_page_config(
     page_title="統合投資ダッシュボード",
@@ -311,22 +318,85 @@ with st.sidebar:
     st.markdown("---")
 
     # FANG+設定
-    st.subheader("💎 FANG+設定")
-    fang_investment = st.number_input(
-        "投資額（円）",
-        min_value=0,
-        max_value=10000000,
-        value=400000,
-        step=10000
-    )
+    st.subheader("💎 FANG+インデックス")
 
-    fang_purchase_price = st.number_input(
-        "購入時の基準価額",
-        min_value=0.0,
-        value=0.0,
-        step=100.0,
-        help="購入後に入力してください"
-    )
+    if FANG_MODULE_OK:
+        # 基準価額の自動取得ボタン
+        if st.button("📡 最新基準価額を取得", use_container_width=True,
+                     help="Yahoo!ファイナンスからiFreeNEXT FANG+の基準価額を取得します"):
+            with st.spinner("Yahoo!ファイナンスから取得中..."):
+                _auto_price = get_fang_current_price()
+            if _auto_price > 0:
+                st.session_state["fang_price_auto"] = _auto_price
+                st.success(f"✅ 取得成功: ¥{_auto_price:,.0f}")
+            else:
+                st.warning("⚠️ 自動取得失敗。手動で入力してください。")
+
+        # 表示用: 取得済み価格を表示
+        _auto_price_disp = st.session_state.get("fang_price_auto", 0.0)
+        if _auto_price_disp > 0:
+            st.caption(f"取得済み基準価額: ¥{_auto_price_disp:,.0f}")
+
+        # 手動入力（自動取得失敗時のバックアップ）
+        fang_manual_price = st.number_input(
+            "現在の基準価額（手動・任意）",
+            min_value=0.0,
+            value=0.0,
+            step=100.0,
+            help="自動取得が失敗した場合に手動で入力してください"
+        )
+
+        # 積立購入を追加するフォーム
+        with st.expander("➕ 積立購入を追加"):
+            _col1, _col2 = st.columns(2)
+            with _col1:
+                _new_date   = st.date_input("購入日", value=None, key="fang_new_date")
+                _new_amount = st.number_input("投資額（円）", min_value=0, step=10000, key="fang_new_amount")
+            with _col2:
+                _new_price  = st.number_input("取得単価（基準価額）", min_value=0.0, step=100.0, key="fang_new_price")
+                _new_memo   = st.text_input("メモ（任意）", key="fang_new_memo")
+            if st.button("💾 購入履歴を追加", use_container_width=True, key="fang_add_btn"):
+                if _new_date and _new_amount > 0 and _new_price > 0:
+                    add_fang_purchase(
+                        str(_new_date), _new_amount, _new_price, _new_memo
+                    )
+                    st.success(f"追加しました: ¥{_new_amount:,.0f} @ ¥{_new_price:,.0f}")
+                    st.rerun()
+                else:
+                    st.error("購入日・投資額・取得単価をすべて入力してください。")
+
+        # 購入履歴の表示
+        _hist_df = load_fang_purchases()
+        if not _hist_df.empty:
+            with st.expander("📋 購入履歴を確認"):
+                st.dataframe(_hist_df, use_container_width=True, hide_index=True)
+
+        # サマリー計算（ダッシュボード本体で使う変数を設定）
+        _manual = fang_manual_price
+        _auto   = st.session_state.get("fang_price_auto", 0.0)
+        _use_price = _auto if _auto > 0 else _manual
+        _fang_summary = calc_fang_summary(current_price=_use_price)
+
+        # ダッシュボード計算用変数（後段で使用）
+        fang_investment    = _fang_summary["total_investment"]
+        fang_current_value = _fang_summary["current_value"]
+        fang_profit        = _fang_summary["profit"]
+        fang_profit_pct    = _fang_summary["profit_pct"]
+        fang_purchase_price = _fang_summary["avg_cost"]  # 後段の互換性のため残す
+
+    else:
+        # fang_manager.py が見つからない場合は旧来の手動入力
+        st.warning("⚠️ fang_manager.py が見つかりません。")
+        fang_investment = st.number_input(
+            "投資額（円）", min_value=0, max_value=10000000, value=100000, step=10000
+        )
+        fang_purchase_price = st.number_input(
+            "購入時の基準価額", min_value=0.0, value=0.0, step=100.0,
+            help="購入後に入力してください"
+        )
+        fang_current_value = fang_investment
+        fang_profit        = 0.0
+        fang_profit_pct    = 0.0
 
     # 現金
     st.subheader("💵 現金")
@@ -446,17 +516,18 @@ st.markdown('<div class="section-header">💼 ポートフォリオ全体</div>'
 cyclical_df = load_cyclical_portfolio()
 
 # FANG+評価額計算
-fang_current_value = fang_investment
-fang_profit = 0
-fang_profit_pct = 0
-
-if fang_purchase_price > 0:
-    # 実際にはQQQの価格を取得して計算
-    qqq_data = get_stock_price('QQQ')
-    if qqq_data['price'] > 0 and fang_purchase_price > 0:
-        fang_current_value = fang_investment * (qqq_data['price'] / fang_purchase_price)
-        fang_profit = fang_current_value - fang_investment
-        fang_profit_pct = (fang_profit / fang_investment * 100)
+# fang_manager統合済みの場合はサイドバーで既に計算されている
+# 未統合（FANG_MODULE_OK=False）の場合のみここで旧来計算を行う
+if not FANG_MODULE_OK:
+    fang_current_value = fang_investment
+    fang_profit = 0
+    fang_profit_pct = 0
+    if fang_purchase_price > 0:
+        qqq_data = get_stock_price('QQQ')
+        if qqq_data['price'] > 0:
+            fang_current_value = fang_investment * (qqq_data['price'] / fang_purchase_price)
+            fang_profit = fang_current_value - fang_investment
+            fang_profit_pct = (fang_profit / fang_investment * 100)
 
 # シクリカル株評価額計算
 cyclical_total_cost = 0
@@ -644,7 +715,7 @@ else:
 # ========================================
 # 3-2. 売却目標価格（たーちゃん哲学2.0）
 # ========================================
-st.markdown('<div class="section-header">🎯 売却目標価格（たーちゃん哲学2.0）</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🎯 売却目標価格</div>', unsafe_allow_html=True)
 
 if not TARGET_PRICES_AVAILABLE:
     st.warning("⚠️ auto_per_estimator.py が見つかりません。リポジトリに追加してください。")
@@ -652,8 +723,8 @@ elif cyclical_df.empty:
     st.info("シクリカル株の保有データがありません。")
 else:
     st.caption(
-        "過去52週の株価データから銘柄ごとに現実的な天井PERを推定。"
-        "画一的なPER 12〜15倍ではなく、各銘柄の特性に合わせた個別最適化目標。"
+        "過去52週の株価データから銘柄ごとに現実的な売却目標価格を推定。"
+        "各銘柄の特性に合わせた個別最適化目標を3段階で表示。"
     )
 
     # NTT除外オプション
